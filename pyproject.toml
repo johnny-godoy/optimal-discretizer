@@ -13,7 +13,7 @@ dependencies = [
     "scikit-learn>=1.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=7.0",
     "cython>=3.0",
@@ -24,3 +24,76 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+fix = true
+preview = true
+line-length = 120
+src = ["src"]
+target-version = "py313"
+unsafe-fixes = true
+
+[tool.ruff.format]
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+preview = true
+
+[tool.ruff.lint]
+ignore = [
+    "CPY001",
+    "N803",
+    "N806",
+]
+preview = true
+select = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "ANN201",
+    "D101",
+    "D102",
+    "D103",
+    "DOC201",
+    "DOC402",
+    "PLR2004",
+    "PLR6301",
+    "S101",
+    "SLF001",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"

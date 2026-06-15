@@ -13,13 +13,15 @@ Gronlund, A., Larsen, K. G., Mathiasen, A., Nielsen, J. S., Schneider, S., & Son
 https://arxiv.org/abs/1701.07204
 """
 
-from __future__ import annotations
+from typing import Self
 
 import numpy as np
+import numpy.typing as npt
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted, validate_data
 
-from ._core import cluster as _cluster_core
+from src._core import cluster as _cluster_core
+from src.utils import centroids_to_edges
 
 
 class OptimalDiscretizer(TransformerMixin, BaseEstimator):
@@ -64,11 +66,11 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
     def __init__(self, n_bins: int = 5) -> None:
         self.n_bins = n_bins
 
-    # ------------------------------------------------------------------
-    # Scikit-learn estimator interface
-    # ------------------------------------------------------------------
-
-    def fit(self, X, y=None):
+    def fit(
+        self,
+        X: npt.ArrayLike,
+        y: None = None,  # noqa: ARG002
+    ) -> Self:
         """Fit the discretizer on *X*.
 
         For each feature column the optimal 1-D k-means solution is computed
@@ -83,17 +85,23 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         Returns
         -------
         self : OptimalDiscretizer
+
+        Raises
+        ------
+        ValueError
+            If *n_bins* is not a positive integer or if *n_bins* is greater
+            than the number of samples in *X*.
         """
         X = validate_data(self, X, ensure_2d=True, dtype=np.float64)
 
         n_samples, n_features = X.shape
         n_bins = int(self.n_bins)
         if n_bins < 1:
-            raise ValueError(f"n_bins must be >= 1, got {n_bins}")
+            msg = f"n_bins must be >= 1, got {n_bins}"
+            raise ValueError(msg)
         if n_bins > n_samples:
-            raise ValueError(
-                f"n_bins must be <= n_samples, got n_samples={n_samples} and n_bins={n_bins}"
-            )
+            msg = f"n_bins must be <= n_samples, got n_samples={n_samples} and n_bins={n_bins}"
+            raise ValueError(msg)
 
         self.centroids_: list[np.ndarray] = []
         self.bin_edges_: list[np.ndarray] = []
@@ -102,12 +110,12 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
             col_data = np.ascontiguousarray(X[:, col], dtype=np.float64)
             _, centroids = _cluster_core(col_data, n_bins)
             self.centroids_.append(centroids)
-            edges = self._centroids_to_edges(centroids)
+            edges = centroids_to_edges(centroids)
             self.bin_edges_.append(edges)
 
         return self
 
-    def transform(self, X):
+    def transform(self, X: npt.ArrayLike) -> np.ndarray:
         """Discretize *X* using the fitted bin edges.
 
         Parameters
@@ -134,17 +142,3 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
             out[:, col] = labels
 
         return out
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _centroids_to_edges(centroids: np.ndarray) -> np.ndarray:
-        """Convert sorted centroid array to bin-edge thresholds.
-
-        Edges are midpoints between consecutive centroids, with ``-inf`` and
-        ``+inf`` as the outermost sentinels.
-        """
-        mid = (centroids[:-1] + centroids[1:]) / 2.0
-        return np.concatenate([[-np.inf], mid, [np.inf]])
