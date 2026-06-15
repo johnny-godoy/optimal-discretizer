@@ -70,6 +70,36 @@ pipe.fit(X_train, y_train)
 pytest tests/
 ```
 
+## Benchmarking k-means effectiveness
+
+The project includes a benchmark system that compares:
+
+- `main`: `OptimalDiscretizer` (exact 1-D optimum algorithm)
+- `lloyd`: scikit-learn `KMeans(algorithm="lloyd")`
+- `bruteforce`: exhaustive partition search (ground-truth optimum)
+
+Run a benchmark suite and append the run to JSONL:
+
+```bash
+python benchmarks/kmeans_effectiveness_benchmark.py --repeats 8
+```
+
+This writes runs to `.benchmarks/kmeans_effectiveness_runs.jsonl`.
+
+Generate comparison summaries and HTML reports:
+
+```bash
+python benchmarks/kmeans_effectiveness_compare.py --plots
+```
+
+Reports are written to `.benchmarks/reports/`:
+
+- `kmeans_main_speed_trend.html`
+- `kmeans_optimality_trend.html`
+- `kmeans_latest_gap_breakdown.html`
+
+If `plotly` is unavailable, the comparison command still prints textual summaries.
+
 ## Parameters
 
 | Parameter | Default | Description |
