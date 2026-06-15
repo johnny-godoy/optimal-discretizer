@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64", "cython>=3.0", "numpy>=1.21"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optimal-discretizer"
+version = "0.1.0"
+description = "Optimal 1-D K-means discretizer compatible with Scikit-Learn, implemented in Cython"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.21",
+    "scikit-learn>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "cython>=3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
