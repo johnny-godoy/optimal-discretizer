@@ -67,19 +67,52 @@ pipe.fit(X_train, y_train)
 ## Running tests
 
 ```bash
-pytest tests/
+uv run pytest tests/
 ```
+
+## Benchmarking k-means effectiveness
+
+The project includes a benchmark system that compares:
+
+- `main`: `OptimalDiscretizer` (exact 1-D optimum algorithm)
+- `lloyd`: scikit-learn `KMeans(algorithm="lloyd")`
+- `bruteforce`: exhaustive partition search (ground-truth optimum)
+
+Run a benchmark suite and append the run to JSONL:
+
+```bash
+python benchmarks/kmeans_effectiveness_benchmark.py --repeats 8
+```
+
+This writes runs to `.benchmarks/kmeans_effectiveness_runs.jsonl`.
+
+Generate comparison summaries and HTML reports:
+
+```bash
+python benchmarks/kmeans_effectiveness_compare.py --plots
+```
+
+Reports are written to `.benchmarks/reports/`:
+
+- `kmeans_main_speed_trend.html`
+- `kmeans_optimality_trend.html`
+- `kmeans_latest_gap_breakdown.html`
+
+If `plotly` is unavailable, the comparison command still prints textual summaries.
 
 ## Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `n_bins`  | `5`     | Number of clusters / bins per feature column |
+| `n_bins`       | `5`     | Number of clusters / bins per feature column. If `None`, search over `n_bins_range`. |
+| `n_bins_range` | `None`  | Inclusive `(n_bins_min, n_bins_max)` search interval used when `n_bins=None`. Defaults to `(1, n_samples)` at fit time. |
+| `scorer`       | `None`  | Callable used when `n_bins=None` to score each candidate clustering (higher is better). |
 
 ## Attributes (after `fit`)
 
 | Attribute      | Shape              | Description |
 |----------------|--------------------|-------------|
-| `centroids_`   | list of (n_bins,)  | Centroid of each bin per feature |
-| `bin_edges_`   | list of (n_bins+1,)| Threshold edges (includes ±∞ sentinels) |
+| `centroids_`   | list of (n_bins_j,)  | Centroid of each bin per feature |
+| `bin_edges_`   | list of (n_bins_j+1,)| Threshold edges (includes ±∞ sentinels) |
+| `n_bins_`      | list of int          | Selected number of bins per feature |
 | `n_features_in_` | int              | Number of features seen at fit time |

@@ -1,17 +1,18 @@
-from setuptools import setup, Extension
+"""Setup script for building the Cython extension module."""
+from setuptools import Extension, setup
 
 try:
-    from Cython.Build import cythonize
     import numpy as np
+    from Cython.Build import cythonize
 
     extensions = cythonize(
         [
             Extension(
-                "optimal_discretizer._core",
-                sources=["src/optimal_discretizer/_core.pyx"],
+                "src._core",
+                sources=["src/_core.pyx"],
                 include_dirs=[np.get_include()],
                 extra_compile_args=["-O3"],
-            )
+            ),
         ],
         compiler_directives={
             "language_level": "3",

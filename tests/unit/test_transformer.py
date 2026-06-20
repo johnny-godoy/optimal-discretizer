@@ -105,6 +105,38 @@ class TestOptimalDiscretizer:
         c = disc.centroids_[0]
         assert (np.diff(c) > 0).all()
 
+    def test_search_n_bins_uses_scorer(self):
+        X = np.array([[1.0], [2.0], [10.0], [11.0], [12.0]])
+
+        def scorer(**kwargs):
+            return float(kwargs["n_bins"])
+
+        disc = OptimalDiscretizer(n_bins=None, n_bins_range=(1, 3), scorer=scorer)
+        disc.fit(X)
+        assert disc.n_bins_[0] == 3
+
+    def test_search_n_bins_default_range(self):
+        X = np.array([[1.0], [2.0], [10.0], [11.0]])
+
+        def scorer(**kwargs):
+            return float(kwargs["n_bins"])
+
+        disc = OptimalDiscretizer(n_bins=None, scorer=scorer)
+        disc.fit(X)
+        assert disc.n_bins_[0] == 4
+
+    def test_both_n_bins_and_scorer_none_warns(self):
+        X = np.array([[1.0], [2.0], [10.0], [11.0]])
+        with pytest.warns(UserWarning, match="Both n_bins and scorer are None"):
+            disc = OptimalDiscretizer(n_bins=None, scorer=None)
+            disc.fit(X)
+        assert disc.n_bins_[0] == 1
+
+    def test_invalid_n_bins_range(self):
+        X = np.array([[1.0], [2.0], [3.0]])
+        with pytest.raises(ValueError, match="n_bins_min must be <= n_bins_max"):
+            OptimalDiscretizer(n_bins=None, n_bins_range=(3, 1), scorer=lambda **_: 0.0).fit(X)
+
 
 # ---------------------------------------------------------------------------
 # Scikit-learn estimator compatibility check
