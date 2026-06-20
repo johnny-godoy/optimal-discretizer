@@ -13,6 +13,8 @@ Gronlund, A., Larsen, K. G., Mathiasen, A., Nielsen, J. S., Schneider, S., & Son
 https://arxiv.org/abs/1701.07204
 """
 
+import warnings
+from collections.abc import Callable
 from typing import Self
 
 import numpy as np
@@ -38,17 +40,29 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
 
     Parameters
     ----------
-    n_bins : int, default=5
+    n_bins : int or None, default=5
         Number of clusters / bins to produce per feature column.
+        When ``None``, the estimator searches over ``[n_bins_min, n_bins_max]`` and
+        picks the value that maximises ``scorer`` for each feature.
+    n_bins_range : tuple[int, int] or None, default=None
+        Inclusive search range used only when ``n_bins=None``.
+        If ``None``, defaults to ``(1, n_samples)`` during :meth:`fit`.
+    scorer : Callable or None, default=None
+        Scoring function used only when ``n_bins=None``. The function is called as
+        ``scorer(x=..., labels=..., centroids=..., n_bins=..., inertia=...)`` and
+        must return a scalar score to maximise.
 
     Attributes
     ----------
-    centroids_ : list of ndarray of shape (n_bins,)
+    centroids_ : list of ndarray of shape (n_bins_j,)
         Centroid of each bin for every input feature, ordered by cluster index.
         Available after :meth:`fit`.
-    bin_edges_ : list of ndarray of shape (n_bins + 1,)
+    bin_edges_ : list of ndarray of shape (n_bins_j + 1,)
         Bin-edge thresholds derived from centroids.  Each threshold is the
         midpoint between consecutive centroids.  Available after :meth:`fit`.
+    n_bins_ : list of int
+        Selected number of bins per feature. Equals ``n_bins`` for all features
+        when ``n_bins`` is provided.
     n_features_in_ : int
         Number of features seen during :meth:`fit`.
 
@@ -63,8 +77,109 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
     (100, 2)
     """
 
-    def __init__(self, n_bins: int = 5) -> None:
+    def __init__(
+        self,
+        n_bins: int | None = 5,
+        n_bins_range: tuple[int, int] | None = None,
+        scorer: Callable[..., float] | None = None,
+    ) -> None:
         self.n_bins = n_bins
+        self.n_bins_range = n_bins_range
+        self.scorer = scorer
+
+    def _check_fit_params(self, n_samples: int) -> None:
+        """Validate constructor parameters that depend on sample count.
+
+        Raises
+        ------
+        ValueError
+            If ``n_bins`` is outside ``[1, n_samples]`` or ``n_bins_range`` is invalid.
+        """
+        if self.n_bins is not None:
+            n_bins = int(self.n_bins)
+            if n_bins < 1:
+                msg = f"n_bins must be >= 1, got {n_bins}"
+                raise ValueError(msg)
+            if n_bins > n_samples:
+                msg = f"n_bins must be <= n_samples, got n_samples={n_samples} and n_bins={n_bins}"
+                raise ValueError(msg)
+
+        if self.n_bins_range is not None:
+            if len(self.n_bins_range) != 2:  # noqa: PLR2004
+                msg = f"n_bins_range must be a tuple of length 2, got {self.n_bins_range!r}"
+                raise ValueError(msg)
+            n_bins_min, n_bins_max = self.n_bins_range
+            n_bins_min = int(n_bins_min)
+            n_bins_max = int(n_bins_max)
+            if n_bins_min < 1:
+                msg = f"n_bins_min must be >= 1, got {n_bins_min}"
+                raise ValueError(msg)
+            if n_bins_max > n_samples:
+                msg = f"n_bins_max must be <= n_samples, got n_samples={n_samples} and n_bins_max={n_bins_max}"
+                raise ValueError(msg)
+            if n_bins_min > n_bins_max:
+                msg = f"n_bins_min must be <= n_bins_max, got n_bins_min={n_bins_min} and n_bins_max={n_bins_max}"
+                raise ValueError(msg)
+
+    def _resolve_n_bins_bounds(self, n_samples: int) -> tuple[int, int]:
+        if self.n_bins_range is None:
+            return (1, n_samples)
+        n_bins_min, n_bins_max = self.n_bins_range
+        return (int(n_bins_min), int(n_bins_max))
+
+    def _score(
+        self,
+        x: np.ndarray,
+        labels: np.ndarray,
+        centroids: np.ndarray,
+        n_bins: int,
+        inertia: float,
+    ) -> float:
+        scorer = self.scorer
+        if scorer is None:
+            msg = "scorer must be provided when n_bins is None"
+            raise ValueError(msg)
+        score = scorer(x=x, labels=labels, centroids=centroids, n_bins=n_bins, inertia=inertia)
+        return float(score)
+
+    def _select_n_bins_for_column(self, col_data: np.ndarray, n_samples: int) -> tuple[np.ndarray, np.ndarray, int]:
+        if self.n_bins is not None:
+            n_bins = int(self.n_bins)
+            labels, centroids = _cluster_core(col_data, n_bins)
+            return labels, centroids, n_bins
+
+        if self.scorer is None:
+            warnings.warn(
+                "Both n_bins and scorer are None. Falling back to n_bins=1.",
+                UserWarning,
+                stacklevel=2,
+            )
+            labels, centroids = _cluster_core(col_data, 1)
+            return labels, centroids, 1
+
+        n_bins_min, n_bins_max = self._resolve_n_bins_bounds(n_samples)
+
+        best_score = -np.inf
+        best_labels: np.ndarray | None = None
+        best_centroids: np.ndarray | None = None
+        best_n_bins = n_bins_min
+
+        for n_bins_candidate in range(n_bins_min, n_bins_max + 1):
+            labels, centroids = _cluster_core(col_data, n_bins_candidate)
+            residuals = col_data - centroids[labels]
+            inertia = float(np.square(residuals).sum())
+            score = self._score(col_data, labels, centroids, n_bins_candidate, inertia)
+            if score > best_score:
+                best_score = score
+                best_labels = labels
+                best_centroids = centroids
+                best_n_bins = n_bins_candidate
+
+        if best_labels is None or best_centroids is None:
+            msg = "Failed to select n_bins from search range"
+            raise RuntimeError(msg)
+
+        return best_labels, best_centroids, best_n_bins
 
     def fit(
         self,
@@ -86,32 +201,23 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         -------
         self : OptimalDiscretizer
 
-        Raises
-        ------
-        ValueError
-            If *n_bins* is not a positive integer or if *n_bins* is greater
-            than the number of samples in *X*.
         """
         X = validate_data(self, X, ensure_2d=True, dtype=np.float64)
 
         n_samples, n_features = X.shape
-        n_bins = int(self.n_bins)
-        if n_bins < 1:
-            msg = f"n_bins must be >= 1, got {n_bins}"
-            raise ValueError(msg)
-        if n_bins > n_samples:
-            msg = f"n_bins must be <= n_samples, got n_samples={n_samples} and n_bins={n_bins}"
-            raise ValueError(msg)
+        self._check_fit_params(n_samples)
 
         self.centroids_: list[np.ndarray] = []
         self.bin_edges_: list[np.ndarray] = []
+        self.n_bins_: list[int] = []
 
         for col in range(n_features):
             col_data = np.ascontiguousarray(X[:, col], dtype=np.float64)
-            _, centroids = _cluster_core(col_data, n_bins)
+            _, centroids, selected_n_bins = self._select_n_bins_for_column(col_data, n_samples)
             self.centroids_.append(centroids)
             edges = centroids_to_edges(centroids)
             self.bin_edges_.append(edges)
+            self.n_bins_.append(selected_n_bins)
 
         return self
 
@@ -136,8 +242,8 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         out = np.empty_like(X, dtype=np.float64)
         for col in range(n_features):
             edges = self.bin_edges_[col]
-            # np.searchsorted with 'right' gives bin indices in [1, n_bins];
-            # subtract 1 to get 0-indexed labels and clip to [0, n_bins-1].
+            # np.searchsorted with 'right' gives bin indices in [1, n_bins_j];
+            # subtract 1 to get 0-indexed labels.
             labels = np.searchsorted(edges[1:-1], X[:, col], side="right")
             out[:, col] = labels
 
