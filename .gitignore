@@ -219,3 +219,6 @@ __marimo__/
 
 # Benchmark results
 .benchmarks/
+
+# Generated code
+src/_core.c

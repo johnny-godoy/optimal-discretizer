@@ -1,3 +1,4 @@
+"""Setup script for building the Cython extension module."""
 from setuptools import Extension, setup
 
 try:
