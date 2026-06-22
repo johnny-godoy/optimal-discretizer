@@ -14,7 +14,6 @@ https://arxiv.org/abs/1701.07204
 """
 
 import warnings
-from collections.abc import Callable
 from typing import Self
 
 import numpy as np
@@ -23,6 +22,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted, validate_data
 
 from src._core import cluster as _cluster_core
+from src.scorers import SCORER_REGISTRY, ScorerProtocol
 from src.utils import centroids_to_edges
 
 
@@ -47,7 +47,7 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
     n_bins_range : tuple[int, int] or None, default=None
         Inclusive search range used only when ``n_bins=None``.
         If ``None``, defaults to ``(1, n_samples)`` during :meth:`fit`.
-    scorer : Callable or None, default=None
+    scorer : ScorerProtocol or None, default=None
         Scoring function used only when ``n_bins=None``. The function is called as
         ``scorer(x=..., labels=..., centroids=..., n_bins=..., inertia=...)`` and
         must return a scalar score to maximise.
@@ -81,7 +81,7 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         self,
         n_bins: int | None = 5,
         n_bins_range: tuple[int, int] | None = None,
-        scorer: Callable[..., float] | None = None,
+        scorer: ScorerProtocol | str | None = None,
     ) -> None:
         self.n_bins = n_bins
         self.n_bins_range = n_bins_range
@@ -139,6 +139,11 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         if scorer is None:
             msg = "scorer must be provided when n_bins is None"
             raise ValueError(msg)
+        if isinstance(scorer, str):
+            scorer = SCORER_REGISTRY.get(scorer)
+            if scorer is None:
+                msg = f"Unknown scorer name: {self.scorer!r}. Default scorer names are: {list(SCORER_REGISTRY.keys())}"
+                raise ValueError(msg)
         score = scorer(x=x, labels=labels, centroids=centroids, n_bins=n_bins, inertia=inertia)
         return float(score)
 
