@@ -56,7 +56,24 @@ class AlgorithmResult:
 
 
 def segment_cost(prefix: npt.NDArray[np.float64], prefix_sq: npt.NDArray[np.float64], start: int, end: int) -> float:
-    """Return within-segment SSE for sorted values in half-open range [start, end)."""
+    """Return within-segment SSE for sorted values in half-open range [start, end).
+
+    Parameters
+    ----------
+    prefix : ndarray of shape (n_samples + 1,)
+        prefix[i] is the sum of the first i sorted values, with prefix[0] = 0.0.
+    prefix_sq : ndarray of shape (n_samples + 1,)
+        prefix_sq[i] is the sum of squares of the first i sorted values, with prefix_sq[0] = 0.0.
+    start : int
+        Starting index of the segment (inclusive).
+    end : int
+        Ending index of the segment (exclusive).
+
+    Returns
+    -------
+    float
+        The sum of squared deviations from the mean for the segment defined by [start, end).
+    """
     count = end - start
     if count <= 0:
         return 0.0
@@ -67,7 +84,25 @@ def segment_cost(prefix: npt.NDArray[np.float64], prefix_sq: npt.NDArray[np.floa
 
 
 def brute_force_optimal_cost(values: npt.NDArray[np.float64], n_clusters: int) -> float:
-    """Return exact global optimum SSE by exhaustively enumerating sorted partitions."""
+    """Return exact global optimum SSE by exhaustively enumerating sorted partitions.
+
+    Parameters
+    ----------
+    values : ndarray of shape (n_samples,)
+        Input values to cluster.
+    n_clusters : int
+        Number of clusters to partition the values into.
+
+    Returns
+    -------
+    float
+        The minimum possible sum of squared deviations from cluster means achievable by any partition.
+
+    Raises
+    ------
+    ValueError
+        If n_clusters is not in the range [1, n_samples].
+    """
     sorted_values = np.sort(values)
     n_samples = int(sorted_values.shape[0])
     if n_clusters < 1 or n_clusters > n_samples:
@@ -102,7 +137,20 @@ def brute_force_optimal_cost(values: npt.NDArray[np.float64], n_clusters: int) -
 
 
 def main_algorithm_cost(values: npt.NDArray[np.float64], n_clusters: int) -> float:
-    """Run repository main algorithm and return SSE."""
+    """Run repository main algorithm and return SSE.
+
+    Parameters
+    ----------
+    values : ndarray of shape (n_samples,)
+        Input values to cluster.
+    n_clusters : int
+        Number of clusters to partition the values into.
+
+    Returns
+    -------
+    float
+        The sum of squared deviations from cluster means for the partition produced by the main algorithm.
+    """
     discretizer = OptimalDiscretizer(n_bins=n_clusters)
     labels = discretizer.fit_transform(values.reshape(-1, 1)).ravel().astype(np.int64)
     centroids = discretizer.centroids_[0]
@@ -112,7 +160,22 @@ def main_algorithm_cost(values: npt.NDArray[np.float64], n_clusters: int) -> flo
 
 
 def lloyd_algorithm_cost(values: npt.NDArray[np.float64], n_clusters: int, seed: int) -> float:
-    """Run sklearn KMeans with Lloyd iterations and return inertia."""
+    """Run sklearn KMeans with Lloyd iterations and return inertia.
+
+    Parameters
+    ----------
+    values : ndarray of shape (n_samples,)
+        Input values to cluster.
+    n_clusters : int
+        Number of clusters to partition the values into.
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    float
+        The sum of squared deviations from cluster means for the partition produced by the Lloyd algorithm.
+    """
     estimator = KMeans(
         n_clusters=n_clusters,
         n_init=10,
@@ -123,7 +186,7 @@ def lloyd_algorithm_cost(values: npt.NDArray[np.float64], n_clusters: int, seed:
     return float(estimator.inertia_)
 
 
-def create_problem(
+def create_problem(  # noqa: PLR0913, PLR0917
     name: str,
     n_samples: int,
     n_clusters: int,
@@ -133,7 +196,32 @@ def create_problem(
     noise_scale: float,
     outlier_rate: float,
 ) -> BenchmarkProblem:
-    """Create one deterministic synthetic benchmark problem."""
+    """Create one deterministic synthetic benchmark problem.
+
+    Parameters
+    ----------
+    name : str
+        Unique name for the problem.
+    n_samples : int
+        Number of samples in each trial dataset.
+    n_clusters : int
+        Number of clusters to generate in each trial dataset.
+    trial_count : int
+        Number of independent trial datasets to generate for the problem.
+    seed : int
+        Random seed for reproducibility.
+    separation : float
+        Average distance between cluster centers.
+    noise_scale : float
+        Standard deviation of Gaussian noise added to cluster samples.
+    outlier_rate : float
+        Proportion of samples to randomly designate as outliers and shift by a large random amount.
+
+    Returns
+    -------
+    BenchmarkProblem
+        The generated benchmark problem with specified parameters.
+    """
     rng = np.random.default_rng(seed)
     datasets: list[npt.NDArray[np.float64]] = []
 
