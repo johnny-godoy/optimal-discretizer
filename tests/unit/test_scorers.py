@@ -5,8 +5,15 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from src._core import cluster
-from src.scorers import CandidateFit, KneedInertiaScorer, MDLBitsKneeScorer, _mdl_terms, mdl_gaussian_scorer, second_difference_scorer
+from src._core import cluster  # noqa: PLC2701
+from src.scorers import (
+    CandidateFit,
+    KneedInertiaScorer,
+    MDLBitsKneeScorer,
+    ScorerProtocol,
+    mdl_gaussian_scorer,
+    second_difference_scorer,
+)
 from src.transformer import OptimalDiscretizer
 
 
@@ -17,7 +24,7 @@ def make_quantized_three_cluster_data() -> np.ndarray:
             rng.normal(-5.0, 0.3, size=80),
             rng.normal(0.0, 0.3, size=80),
             rng.normal(5.0, 0.3, size=80),
-        ]
+        ],
     )
     return np.round(x, decimals=0).astype(np.float64)
 
@@ -74,9 +81,7 @@ class TestCurveScorers:
         with pytest.warns(UserWarning, match="minimum total MDL code length"):
             chosen_n_bins = scorer(x, candidates)
         total_bits = {
-            candidate.n_bins: sum(
-                _mdl_terms(x, candidate.labels, candidate.centroids, candidate.n_bins)
-            )
+            candidate.n_bins: -mdl_gaussian_scorer(x, **candidate._asdict())
             for candidate in candidates
         }
         assert chosen_n_bins == min(total_bits, key=total_bits.get)
@@ -109,7 +114,7 @@ class TestCurveScorers:
 
 class TestPointScorerRegression:
     @pytest.mark.parametrize("scorer", [second_difference_scorer, mdl_gaussian_scorer])
-    def test_point_scorers_match_direct_argmax(self, scorer):
+    def test_point_scorers_match_direct_argmax(self, scorer: ScorerProtocol):
         x = make_quantized_three_cluster_data()
         scores = {
             candidate.n_bins: scorer(

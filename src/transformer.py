@@ -22,7 +22,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted, validate_data
 
 from src._core import cluster as _cluster_core
-from src.scorers import CURVE_SCORER_REGISTRY, CandidateFit, CurveScorerProtocol, SCORER_REGISTRY, ScorerProtocol
+from src.scorers import CURVE_SCORER_REGISTRY, SCORER_REGISTRY, CandidateFit, CurveScorerProtocol, ScorerProtocol
 from src.utils import centroids_to_edges
 
 
@@ -157,7 +157,11 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         score = scorer(x=x, labels=labels, centroids=centroids, n_bins=n_bins, inertia=inertia)
         return float(score)
 
-    def _select_n_bins_for_column(self, col_data: np.ndarray, n_samples: int) -> tuple[np.ndarray, np.ndarray, int]:
+    def _select_n_bins_for_column(  # noqa: PLR0914
+        self,
+        col_data: np.ndarray,
+        n_samples: int,
+    ) -> tuple[np.ndarray, np.ndarray, int]:
         if self.n_bins is not None:
             n_bins = int(self.n_bins)
             labels, centroids = _cluster_core(col_data, n_bins)
@@ -181,14 +185,24 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
             labels, centroids = _cluster_core(col_data, n_bins_candidate)
             residuals = col_data - centroids[labels]
             inertia = float(np.square(residuals).sum())
-            candidates.append(CandidateFit(n_bins=n_bins_candidate, labels=labels, centroids=centroids, inertia=inertia))
+            candidates.append(
+                CandidateFit(
+                    n_bins=n_bins_candidate,
+                    labels=labels,
+                    centroids=centroids,
+                    inertia=inertia,
+                ),
+            )
 
         best_labels: np.ndarray | None = None
         best_centroids: np.ndarray | None = None
         best_n_bins = n_bins_min
         if getattr(scorer, "is_curve_scorer", False):
             chosen_n_bins = scorer(col_data, candidates)
-            selected_candidate = next((candidate for candidate in candidates if candidate.n_bins == chosen_n_bins), None)
+            selected_candidate = next(
+                (candidate for candidate in candidates if candidate.n_bins == chosen_n_bins),
+                None,
+            )
             if selected_candidate is None:
                 msg = f"scorer returned n_bins={chosen_n_bins} which was not among the candidates evaluated"
                 raise ValueError(msg)
@@ -198,7 +212,13 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         else:
             best_score = -np.inf
             for candidate in candidates:
-                score = self._score(col_data, candidate.labels, candidate.centroids, candidate.n_bins, candidate.inertia)
+                score = self._score(
+                    col_data,
+                    candidate.labels,
+                    candidate.centroids,
+                    candidate.n_bins,
+                    candidate.inertia,
+                )
                 if score > best_score:
                     best_score = score
                     best_labels = candidate.labels

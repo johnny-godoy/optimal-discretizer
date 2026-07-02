@@ -1,12 +1,14 @@
 """Implement base scorers for use in OptimalDiscretizer when n_bins=None."""
 
+import warnings
 from collections.abc import Sequence
 from typing import ClassVar, NamedTuple, Protocol, runtime_checkable
-import warnings
 
-from kneed import KneeLocator
 import numpy as np
 import numpy.typing as npt
+from kneed import KneeLocator
+
+_MIN_UNIQUE_VALUES_FOR_GAP = 2
 
 
 class CandidateFit(NamedTuple):
@@ -75,8 +77,25 @@ class CurveScorerProtocol(Protocol):
 
 
 def _resolve_min_std(x: npt.ArrayLike, min_std: float | None) -> float:
-    """Resolve the minimum residual standard deviation used for MDL coding."""
+    """Resolve the minimum residual standard deviation used for MDL coding.
 
+    Parameters
+    ----------
+    x : array-like of shape (n_samples,)
+        Original one-dimensional data used to infer the default precision floor.
+    min_std : float or None
+        User-supplied minimum residual standard deviation.
+
+    Returns
+    -------
+    min_std : float
+        Positive residual standard deviation floor used in MDL calculations.
+
+    Raises
+    ------
+    ValueError
+        If ``min_std`` is provided but is not strictly positive.
+    """
     if min_std is not None:
         min_std_float = float(min_std)
         if min_std_float <= 0:
@@ -86,7 +105,7 @@ def _resolve_min_std(x: npt.ArrayLike, min_std: float | None) -> float:
 
     x_array = np.asarray(x, dtype=np.float64)
     unique_values = np.unique(x_array)
-    if unique_values.size < 2:
+    if unique_values.size < _MIN_UNIQUE_VALUES_FOR_GAP:
         return float(np.finfo(np.float64).eps)
 
     gaps = np.diff(unique_values)
@@ -104,8 +123,28 @@ def _mdl_terms(
     n_bins: int,
     min_std: float | None = None,
 ) -> tuple[float, float]:
-    """Compute model and residual code lengths, in bits, for a clustering."""
+    """Compute model and residual code lengths, in bits, for a clustering.
 
+    Parameters
+    ----------
+    x : array-like of shape (n_samples,)
+        The original data that was clustered.
+    labels : array-like of shape (n_samples,)
+        Cluster labels for each sample.
+    centroids : array-like of shape (n_bins,)
+        Centroid values for each cluster.
+    n_bins : int
+        The number of clusters represented by ``labels`` and ``centroids``.
+    min_std : float or None, default=None
+        Minimum residual standard deviation used to floor per-bin variances.
+
+    Returns
+    -------
+    model_bits : float
+        The MDL code length for the centroid parameters.
+    data_bits : float
+        The MDL code length for the residuals given the centroids.
+    """
     x_array = np.asarray(x, dtype=np.float64)
     labels_array = np.asarray(labels, dtype=np.intp)
     centroids_array = np.asarray(centroids, dtype=np.float64)
@@ -176,7 +215,7 @@ def second_difference_scorer(
     return float(score)
 
 
-def mdl_gaussian_scorer(
+def mdl_gaussian_scorer(  # noqa: PLR0913, PLR0917
     x: npt.ArrayLike,
     labels: npt.ArrayLike,
     centroids: npt.ArrayLike,
