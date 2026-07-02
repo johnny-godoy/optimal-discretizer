@@ -22,7 +22,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted, validate_data
 
 from src._core import cluster as _cluster_core
-from src.scorers import SCORER_REGISTRY, ScorerProtocol
+from src.scorers import CURVE_SCORER_REGISTRY, CandidateFit, CurveScorerProtocol, SCORER_REGISTRY, ScorerProtocol
 from src.utils import centroids_to_edges
 
 
@@ -47,10 +47,12 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
     n_bins_range : tuple[int, int] or None, default=None
         Inclusive search range used only when ``n_bins=None``.
         If ``None``, defaults to ``(1, n_samples)`` during :meth:`fit`.
-    scorer : ScorerProtocol or None, default=None
+    scorer : ScorerProtocol or CurveScorerProtocol or None, default=None
         Scoring function used only when ``n_bins=None``. The function is called as
         ``scorer(x=..., labels=..., centroids=..., n_bins=..., inertia=...)`` and
-        must return a scalar score to maximise.
+        must return a scalar score to maximise, or as
+        ``scorer(x=..., candidates=...)`` and return the selected ``n_bins``
+        directly when using a curve scorer.
 
     Attributes
     ----------
@@ -81,7 +83,7 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         self,
         n_bins: int | None = 5,
         n_bins_range: tuple[int, int] | None = None,
-        scorer: ScorerProtocol | str | None = None,
+        scorer: ScorerProtocol | CurveScorerProtocol | str | None = None,
     ) -> None:
         self.n_bins = n_bins
         self.n_bins_range = n_bins_range
@@ -127,6 +129,19 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         n_bins_min, n_bins_max = self.n_bins_range
         return (int(n_bins_min), int(n_bins_max))
 
+    def _resolve_scorer(self) -> ScorerProtocol | CurveScorerProtocol:
+        scorer = self.scorer
+        if scorer is None:
+            msg = "scorer must be provided when n_bins is None"
+            raise ValueError(msg)
+        if isinstance(scorer, str):
+            scorer = SCORER_REGISTRY.get(scorer) or CURVE_SCORER_REGISTRY.get(scorer)
+            if scorer is None:
+                scorer_names = [*SCORER_REGISTRY.keys(), *CURVE_SCORER_REGISTRY.keys()]
+                msg = f"Unknown scorer name: {self.scorer!r}. Default scorer names are: {scorer_names}"
+                raise ValueError(msg)
+        return scorer
+
     def _score(
         self,
         x: np.ndarray,
@@ -135,15 +150,10 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
         n_bins: int,
         inertia: float,
     ) -> float:
-        scorer = self.scorer
-        if scorer is None:
-            msg = "scorer must be provided when n_bins is None"
+        scorer = self._resolve_scorer()
+        if getattr(scorer, "is_curve_scorer", False):
+            msg = "curve scorers cannot be used with pointwise _score evaluation"
             raise ValueError(msg)
-        if isinstance(scorer, str):
-            scorer = SCORER_REGISTRY.get(scorer)
-            if scorer is None:
-                msg = f"Unknown scorer name: {self.scorer!r}. Default scorer names are: {list(SCORER_REGISTRY.keys())}"
-                raise ValueError(msg)
         score = scorer(x=x, labels=labels, centroids=centroids, n_bins=n_bins, inertia=inertia)
         return float(score)
 
@@ -163,22 +173,37 @@ class OptimalDiscretizer(TransformerMixin, BaseEstimator):
             return labels, centroids, 1
 
         n_bins_min, n_bins_max = self._resolve_n_bins_bounds(n_samples)
+        scorer = self._resolve_scorer()
 
-        best_score = -np.inf
-        best_labels: np.ndarray | None = None
-        best_centroids: np.ndarray | None = None
-        best_n_bins = n_bins_min
+        candidates: list[CandidateFit] = []
 
         for n_bins_candidate in range(n_bins_min, n_bins_max + 1):
             labels, centroids = _cluster_core(col_data, n_bins_candidate)
             residuals = col_data - centroids[labels]
             inertia = float(np.square(residuals).sum())
-            score = self._score(col_data, labels, centroids, n_bins_candidate, inertia)
-            if score > best_score:
-                best_score = score
-                best_labels = labels
-                best_centroids = centroids
-                best_n_bins = n_bins_candidate
+            candidates.append(CandidateFit(n_bins=n_bins_candidate, labels=labels, centroids=centroids, inertia=inertia))
+
+        best_labels: np.ndarray | None = None
+        best_centroids: np.ndarray | None = None
+        best_n_bins = n_bins_min
+        if getattr(scorer, "is_curve_scorer", False):
+            chosen_n_bins = scorer(col_data, candidates)
+            selected_candidate = next((candidate for candidate in candidates if candidate.n_bins == chosen_n_bins), None)
+            if selected_candidate is None:
+                msg = f"scorer returned n_bins={chosen_n_bins} which was not among the candidates evaluated"
+                raise ValueError(msg)
+            best_labels = selected_candidate.labels
+            best_centroids = selected_candidate.centroids
+            best_n_bins = selected_candidate.n_bins
+        else:
+            best_score = -np.inf
+            for candidate in candidates:
+                score = self._score(col_data, candidate.labels, candidate.centroids, candidate.n_bins, candidate.inertia)
+                if score > best_score:
+                    best_score = score
+                    best_labels = candidate.labels
+                    best_centroids = candidate.centroids
+                    best_n_bins = candidate.n_bins
 
         if best_labels is None or best_centroids is None:
             msg = "Failed to select n_bins from search range"

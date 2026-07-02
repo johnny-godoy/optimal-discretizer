@@ -9,6 +9,7 @@ description = "Optimal 1-D K-means discretizer compatible with Scikit-Learn, imp
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "kneed>=0.8.6",
     "numpy>=1.21",
     "scikit-learn>=1.0",
 ]
