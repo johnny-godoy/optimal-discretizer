@@ -46,6 +46,9 @@ class ScorerProtocol(Protocol):
             The number of clusters (bins) used in the clustering.
         inertia : float
             The inertia (sum of squared distances to centroids) of the clustering.
+            Accepted for :class:`ScorerProtocol` compatibility, but not used here
+            because the MDL residual term depends on per-bin variances rather than
+            only the total sum of squared errors.
 
         Returns
         -------
