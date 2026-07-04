@@ -457,7 +457,7 @@ def _expand_none_variant(
     x_none = sorted({p["n_bins"] for p in agg if p.get("n_bins") is not None})
     if x_none:
         return x_none, [none_q] * len(x_none)
-    return x_vals or [min(DEFAULT_N_BINS_FOR_PLOT)], [none_q]
+    return x_vals or DEFAULT_N_BINS_FOR_PLOT, [none_q] * len(x_vals or DEFAULT_N_BINS_FOR_PLOT)
 
 
 # ---------------------------------------------------------------------------
