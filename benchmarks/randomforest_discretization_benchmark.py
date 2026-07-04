@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import platform
 import sys
@@ -538,7 +539,9 @@ def _run_one_config(  # noqa: PLR0913
     dict
         Serialisable result row.
     """
-    config_seed = base_seed + hash((ds_name, variant, n_bins, n_estimators, str(max_depth))) % (2**16)
+    key = f"{ds_name}:{variant}:{n_bins}:{n_estimators}:{max_depth}"
+    digest = int(hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()[:8], 16)
+    config_seed = base_seed + (digest % (2**16))
 
     metrics = evaluate_config(
         variant=variant,

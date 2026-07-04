@@ -237,18 +237,14 @@ def primary_quality_key(task: str) -> str:
     return "r2_mean"
 
 
-def quality_higher_better(task: str) -> bool:  # noqa: ARG001
+def quality_higher_better() -> bool:
     """Return True iff the primary quality metric is higher-is-better.
-
-    Parameters
-    ----------
-    task : str
-        Either ``"classification"`` or ``"regression"``.
 
     Returns
     -------
     bool
-        True for classification (ROC-AUC) and regression R².
+        Always True: both ROC-AUC (classification) and R² (regression) are
+        higher-is-better metrics.
     """
     return True  # both roc_auc and r2 are higher-better
 
@@ -282,7 +278,7 @@ def print_summary(rows: list[dict[str, Any]], speed_metric: str) -> None:  # noq
         ds_rows = [r for r in rows if r["dataset"] == ds_name]
         task = ds_rows[0].get("task", "unknown")
         q_key = primary_quality_key(task)
-        higher = quality_higher_better(task)
+        higher = quality_higher_better()
         q_label = "ROC-AUC" if task == "classification" else "R²"
 
         sys.stdout.write(f"═══ {ds_name} ({task}) ═══\n")
@@ -622,7 +618,7 @@ def generate_plots(  # noqa: C901, PLR0912, PLR0914, PLR0915
         task = ds_rows[0].get("task", "unknown")
         q_key = primary_quality_key(task)
         q_label = "ROC-AUC" if task == "classification" else "R²"
-        higher = quality_higher_better(task)
+        higher = quality_higher_better()
 
         agg = aggregate_by_key(ds_rows, ["variant", "n_bins"], [q_key, speed_key])
         agg = [a for a in agg if q_key in a and speed_key in a]
