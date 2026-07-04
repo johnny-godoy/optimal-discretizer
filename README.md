@@ -100,6 +100,58 @@ Reports are written to `.benchmarks/reports/`:
 
 If `plotly` is unavailable, the comparison command still prints textual summaries.
 
+## Benchmarking RandomForest discretization (speed vs. quality)
+
+The project includes a second benchmark suite that measures how pre-discretizing
+features affects RandomForest **quality** and **speed** across four variants:
+
+- `none`     — RandomForest on raw (undiscretized) features (baseline).
+- `quantile` — `KBinsDiscretizer(strategy="quantile", encode="ordinal")` + RF.
+- `kmeans`   — `KBinsDiscretizer(strategy="kmeans", encode="ordinal")` + RF.
+- `optimal`  — `OptimalDiscretizer` (this package's exact 1-D k-means) + RF.
+
+Run a benchmark suite (sweeps `n_bins` and a small RF hyper-parameter grid,
+uses repeated K-fold CV so all variants share identical folds):
+
+```bash
+uv run python benchmarks/randomforest_discretization_benchmark.py --repeats 3
+```
+
+This appends runs to `.benchmarks/randomforest_discretization_runs.jsonl`.
+Additional flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--repeats N` | `3` | Number of CV repeats per config. |
+| `--datasets ...` | all | Subset of datasets (e.g. `breast_cancer synth_clf`). |
+| `--n-bins ...` | `2 4 8 16 32 64` | Bin counts to sweep. |
+| `--variants ...` | all four | Variants to include. |
+| `--seed N` | `42` | Base random seed. |
+| `--output PATH` | `.benchmarks/randomforest_discretization_runs.jsonl` | Output JSONL file. |
+
+Generate textual summaries and optional HTML reports:
+
+```bash
+uv run python benchmarks/randomforest_discretization_compare.py
+uv run python benchmarks/randomforest_discretization_compare.py --plots
+```
+
+With `--plots`, three interactive HTML reports are written to `.benchmarks/reports/`:
+
+- `rf_quality_vs_bins.html`       — quality metric vs. n_bins, one line per variant/dataset.
+- `rf_speed_vs_bins.html`         — chosen speed metric vs. n_bins per variant.
+- `rf_speed_quality_pareto.html`  — scatter with the Pareto frontier marked (★ = Pareto-optimal).
+
+The textual output enumerates Pareto-optimal configs per dataset and addresses three
+headline comparisons per dataset: `optimal` vs. `kmeans` quality/speed at equal bins;
+`optimal`/`kmeans` vs. `quantile`; and whether any discretized variant beats `none` (a
+regularisation-effect signal).
+
+Use `--speed-metric` to change the speed axis for Pareto and speed plots
+(choices: `total_time`, `rf_fit_time`, `disc_fit_time`, `disc_transform_time`, `rf_predict_time`).
+
+If `plotly` is unavailable, the compare command still prints all textual summaries.
+
 ## Parameters
 
 | Parameter | Default | Description |
