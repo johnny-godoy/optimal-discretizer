@@ -16,4 +16,15 @@ endif
 
 python = import('python').find_installation(pure: false)
 
+# A wheel ships the kernel without its symbol table, which pydistcheck rejects. meson-python copies the built files
+# itself, so the install option `strip` does not apply, and the linker strips the module. MSVC keeps the symbols in a
+# separate PDB file, which no wheel holds.
+c_compiler = meson.get_compiler('c')
+kernel_link_args = []
+if host_machine.system() == 'darwin'
+  kernel_link_args = ['-Wl,-S', '-Wl,-x']
+elif c_compiler.get_argument_syntax() != 'msvc'
+  kernel_link_args = ['-Wl,-s']
+endif
+
 subdir('src/optimal_discretizer')

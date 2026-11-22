@@ -15,6 +15,7 @@ endforeach
 python.extension_module(
   'optimal_partition',
   'domain/optimal_partition.pyx',
+  link_args: kernel_link_args,
   install: true,
   subdir: 'optimal_discretizer/domain',
 )
