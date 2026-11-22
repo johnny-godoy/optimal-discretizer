@@ -2520,6 +2520,10 @@ test = [
     { name = "pytest-cov" },
     { name = "sybil" },
 ]
+wheel-test = [
+    { name = "hypothesis" },
+    { name = "pytest" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2586,6 +2590,10 @@ test = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "sybil", specifier = ">=10.1.0" },
+]
+wheel-test = [
+    { name = "hypothesis", specifier = ">=6.170.1" },
+    { name = "pytest", specifier = ">=9.1.1" },
 ]
 
 [[package]]

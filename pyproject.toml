@@ -194,12 +194,17 @@ build = [
 ]
 # the test matrix installs only this group (and build) on each supported Python version
 test = [
-    "hypothesis>=6.170.1",
     # tests/unit/conftest.py reads the coverage map of the mutation runs with orjson
     "orjson>=3.13.0",
-    "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "sybil>=10.1.0",
+    { include-group = "wheel-test" },
+]
+# cibuildwheel installs only this group to test each wheel, the free-threaded builds included, for which orjson has no
+# build; the wheel tests run without the conftest files, so they need neither orjson nor sybil
+wheel-test = [
+    "hypothesis>=6.170.1",
+    "pytest>=9.1.1",
 ]
 # the release workflow checks, installs and smoke-tests the built files with this group
 dist = [
@@ -339,7 +344,7 @@ name = "cz_conventional_commits"
 [tool.cibuildwheel]
 build = ["cp311-*", "cp312-*", "cp313-*", "cp314-*", "cp314t-*", "cp315-*", "cp315t-*"]
 build-frontend = "build[uv]"
-test-groups = ["test"]
+test-groups = ["wheel-test"]
 test-command = "pytest {project}/tests/unit/optimal_discretizer --noconftest -p no:cacheprovider -o addopts= -q"
 
 [tool.cibuildwheel.linux]
