@@ -1,6 +1,6 @@
 [project]
 name = "optimal-discretizer"
-version = "0.0.0"
+version = "0.1.0"
 description = "Exact 1-D k-means discretization for scikit-learn, with a Cython core."
 readme = "README.md"
 license = "MIT"

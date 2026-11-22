@@ -8,5 +8,5 @@ milestone sets its status to "Done" and its version in `pyproject.toml`.
 
 | Version | Milestone | Plan | Needs | Status |
 | --- | --- | --- | --- | --- |
-| 0.1.0 | The first release that users can depend on. | None | | Planned |
+| 0.1.0 | The first release that users can depend on: exact 1-D k-means discretization on PyPI, with wheels for each platform and a Lean proof of the optimum. | None | | Done |
 | **1.0.0** | **Stable API.** No breaking change without a new MAJOR version. | None | 0.1.0 | Planned |
