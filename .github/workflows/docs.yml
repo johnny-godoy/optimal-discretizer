@@ -59,8 +59,8 @@ jobs:
         # broken link or a docstring that does not render fails the build. Zensical alone exits 0 on a griffe warning.
         run: just docs
       - name: Check the exports
-        # Zensical ignores a `hooks` setting without a warning, and an iframe target is raw HTML that no link
-        # check reads. A missing export would publish an empty page.
+        # Zensical ignores a `hooks` setting without a warning. A missing export would publish an empty page, and the
+        # link check of scripts.build_docs reports it as a broken link only on a page that links to it.
         run: |
           for paper in proofs/papers/*/paper.typ; do
             name=$(basename "$(dirname "$paper")")
