@@ -1,1 +1,1 @@
-"""Module for unit tests."""
+"""Unit tests."""

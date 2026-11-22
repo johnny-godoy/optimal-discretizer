@@ -1,0 +1,23 @@
+# Generated: noise for the model
+uv.lock
+
+# Python env + caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+wheels/
+
+# Secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+.git/

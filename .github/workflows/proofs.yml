@@ -1,0 +1,74 @@
+
+name: Proofs
+
+# The Lean proofs do not import the Python code, so only a change to the proofs or their pins can break them.
+# The unit tests, not this workflow, guard the link between the code and the model of a proof.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "proofs/OptimalDiscretizerProofs/**"
+      - "proofs/OptimalDiscretizerProofs.lean"
+      - "proofs/lakefile.toml"
+      - "proofs/lean-toolchain"
+      - "proofs/lake-manifest.json"
+      - ".github/workflows/proofs.yml"
+  pull_request:
+    paths:
+      - "proofs/OptimalDiscretizerProofs/**"
+      - "proofs/OptimalDiscretizerProofs.lean"
+      - "proofs/lakefile.toml"
+      - "proofs/lean-toolchain"
+      - "proofs/lake-manifest.json"
+      - ".github/workflows/proofs.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: proofs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash # -eo pipefail, so `lake build | tee log` still fails when the build fails
+
+jobs:
+  lake-build:
+    name: lake build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Lean and download the Mathlib cache
+        # lean-action installs elan, reads proofs/lean-toolchain, and runs `lake exe cache get`. The build is a
+        # separate step so that its output can be checked for axioms.
+        uses: leanprover/lean-action@24581d74d674803a25a81b10b059c5c0cdd344c6 # v1.6.2
+        with:
+          lake-package-directory: proofs
+          build: "false"
+          use-github-cache: "true"
+      - name: Build the proofs
+        working-directory: proofs
+        run: lake build 2>&1 | tee "$RUNNER_TEMP/lake-build.log"
+      - name: Check the axioms
+        # `lake build` exits 0 for a theorem that uses `sorry`. Each main theorem may use only propext,
+        # Classical.choice and Quot.sound.
+        run: |
+          log="$RUNNER_TEMP/lake-build.log"
+          grep -q "Build completed successfully" "$log" || { echo "::error::the build did not complete"; exit 1; }
+          if grep -qE "declaration uses .sorry." "$log"; then
+            echo "::error::a declaration uses sorry"; exit 1
+          fi
+          # Lean wraps a long line, so join the log into one line before it is searched.
+          joined=$(tr '\n' ' ' < "$log" | sed 's/  */ /g')
+          axioms=$(printf '%s' "$joined" | grep -oE "depends on axioms: \[[^]]*\]" || true)
+          none=$(printf '%s' "$joined" | grep -oE "does not depend on any axioms" || true)
+          test -n "$axioms$none" || { echo "::error::the axiom check printed nothing"; exit 1; }
+          extra=$(printf '%s\n' "$axioms" | sed 's/.*\[//; s/\]//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$' \
+            | grep -vxE 'propext|Classical.choice|Quot.sound' || true)
+          if [ -n "$extra" ]; then
+            echo "::error::a theorem depends on an axiom other than propext, Classical.choice and Quot.sound: $extra"
+            exit 1
+          fi

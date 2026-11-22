@@ -1,0 +1,340 @@
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash # -eo pipefail, so `tool | tee log` still fails when the tool does
+
+env:
+  CI_LOGS: /tmp/ci-logs
+  CI_REPORT: /tmp/ci-report
+
+# Fail-fast order: cheap static gates first, in parallel; slower dynamic gates only run once those pass.
+#   changes: decides which gates a pull request needs (dorny/paths-filter); a push to main runs every gate
+#   stage 1: prek, trufflehog, semgrep, trivy
+#   stage 2: pytest (need prek only, so they start while the scanners still run)
+#   stage 3: mutation (needs every gate above; slowest). Only the lines changed against the base run;
+#            mutation-weekly.yml runs all.
+#
+# The ruleset requires every gate on every pull request, so a gate that the changed files cannot affect is skipped with
+# a job-level `if`, not removed with a workflow-level `paths:` filter. GitHub counts a skipped job as a pass, and a
+# filtered-out workflow would leave its required checks pending forever.
+#   progress: runs next to the gates on same-repo PRs; keeps one PR comment up to date ("CI in progress") while they run
+#   report:  always runs after all of them, replaces that comment with what failed and how to fix it
+#
+# Every gate tees its output to $CI_LOGS. A failed gate then runs `ci_report.py snippet <gate>`, which turns the logs
+# into a short "what failed / how to fix" section and uploads it for the report job.
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    # Outside a pull request there is no base to compare with, so every filter answers "true".
+    outputs:
+      deps: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.deps }}
+      python: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.python }}
+      src: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.src }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          # Each filter also lists the CI definition: a change to it must run the gates that it defines.
+          filters: |
+            deps:
+              - "uv.lock"
+              - "pyproject.toml"
+              - "**/Dockerfile*"
+              - ".github/**"
+            python:
+              - "src/**"
+              - "tests/**"
+              - "conftest.py"
+              - "README.md"
+              - "docs/*.md"
+              - "scripts/**"
+              - "semgrep/**"
+              - "pyproject.toml"
+              - "uv.lock"
+              - "cosmic-ray.toml"
+              - ".github/workflows/ci.yml"
+              - ".github/actions/**"
+            src:
+              - "src/**"
+              - ".github/workflows/ci.yml"
+              - ".github/actions/**"
+              - "scripts/mutation.py"
+              - "cosmic-ray.toml"
+
+  prek:
+    name: prek
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup # pyrefly resolves the installed packages
+      - name: Cache the hook environments
+        # prek clones the remote hook repositories (pre-commit-hooks, actionlint); the config pins their revisions.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ hashFiles('prek.toml') }}
+      - name: Run all hooks
+        run: |
+          mkdir -p "$CI_LOGS"
+          just check --show-diff-on-failure --color never 2>&1 | tee "$CI_LOGS/prek.log"
+      - name: Check that the pull request adds no clone
+        # The checkout holds the merge of the pull request. The base branch must exist locally for the comparison, so
+        # fetch it first. scripts/check_new_clones.py fails, and does not pass, if the base is missing.
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          just clones "origin/${BASE_REF}" 2>&1 | tee -a "$CI_LOGS/prek.log"
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: prek
+
+  trufflehog:
+    name: trufflehog
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Cache the trufflehog binary
+        id: trufflehog-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/bin/trufflehog
+          key: trufflehog-${{ runner.os }}-v3.90.8 # bump with the version in the install step
+      - name: Install trufflehog
+        if: steps.trufflehog-cache.outputs.cache-hit != 'true'
+        run: |
+          # Download first and check the hash, so a changed installer fails here and does not run. Recompute the hash
+          # with `sha256sum` when you bump the version.
+          mkdir -p ~/.local/bin
+          curl -sSfL -o "$RUNNER_TEMP/trufflehog-install.sh" https://raw.githubusercontent.com/trufflesecurity/trufflehog/v3.90.8/scripts/install.sh
+          echo "c394defeaea8a7c48f828a2051b608a9b19f43f34b891407b66a386c3e2591e2  $RUNNER_TEMP/trufflehog-install.sh" | sha256sum --check
+          sh "$RUNNER_TEMP/trufflehog-install.sh" -b ~/.local/bin v3.90.8
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Scan git history
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          mkdir -p "$CI_LOGS"
+          args=(git "file://$PWD" --no-update --results=verified,unknown --fail --json --branch HEAD)
+          # PRs scan only the commits they add; a new branch has an all-zero BASE and is scanned whole.
+          if [[ -n "$BASE" && ! "$BASE" =~ ^0+$ ]]; then args+=(--since-commit "$BASE"); fi
+          trufflehog "${args[@]}" > "$CI_LOGS/trufflehog.json" 2> "$CI_LOGS/trufflehog.err" || {
+            status=$?
+            echo "trufflehog exited $status"; tail -n 20 "$CI_LOGS/trufflehog.err"; exit "$status"
+          }
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: trufflehog
+
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Scan with base rules
+        # semgrep 1.131.0 bundles a protobuf that cannot import on Python 3.14, the version of .python-version, so the
+        # scan runs on 3.13.
+        run: |
+          mkdir -p "$CI_LOGS"
+          uvx --python 3.13 --from semgrep==1.131.0 --with 'setuptools<81' semgrep scan --config p/default --error --metrics=off \
+            --json-output="$CI_LOGS/semgrep.json" 2>&1 | tee "$CI_LOGS/semgrep.log"
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: semgrep
+
+  trivy:
+    name: trivy
+    needs: [changes]
+    if: needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: mkdir -p "$CI_LOGS"
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: json
+          output: /tmp/ci-logs/trivy.json
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: trivy
+
+  pytest:
+    name: pytest (100% coverage)
+    needs: [changes, prek]
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Run tests
+        # pyproject addopts adds --cov; branch coverage with fail_under = 100 fails the run below 100%
+        run: |
+          mkdir -p "$CI_LOGS"
+          just test --color=no 2>&1 | tee "$CI_LOGS/pytest.log"
+      - name: Run the documentation examples
+        # the code blocks of the Markdown files and the doctests of the docstrings (tests/docs/conftest.py)
+        run: just test-docs --color=no 2>&1 | tee -a "$CI_LOGS/pytest.log"
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: pytest
+
+
+  test-matrix:
+    name: pytest (Python ${{ matrix.python }})
+    needs: [changes, prek]
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every CPython of requires-python. The tools of the dev group need 3.14, so these runs install only the
+        # package, the test group and the build group of the editable install.
+        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the package and the test group
+        env:
+          PYTHON: ${{ matrix.python }}
+        run: uv sync --frozen --python "$PYTHON" --no-default-groups --group test --group build
+      - name: Run the tests of the package
+        run: |
+          mkdir -p "$CI_LOGS"
+          uv run --frozen --no-sync pytest tests/unit/optimal_discretizer --no-cov --color=no 2>&1 | tee "$CI_LOGS/pytest.log"
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: pytest
+
+  mutation:
+    name: mutation (changed modules, 100% score)
+    needs: [changes, prek, trufflehog, semgrep, trivy, pytest, test-matrix]
+    # A skipped gate does not block this job, so a failed or cancelled gate must be named. Without `!cancelled()` the
+    # default `success()` would skip the job whenever any gate is skipped.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && needs.changes.outputs.src == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the changed-module filter needs the merge base with the base revision
+      - uses: ./.github/actions/setup
+      - name: Run cosmic-ray on changed modules, fail on any surviving mutant
+        env:
+          # A PR compares with its base branch; a push to main compares with the previous head of main.
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          mkdir -p "$CI_LOGS"
+          # A new branch or a forced push has an all-zero or unknown BASE; mutate every module then.
+          if git rev-parse --verify --quiet "$BASE^{commit}" > /dev/null; then
+            just mutate "$BASE" 2>&1 | tee "$CI_LOGS/mutation.log"
+          else
+            just mutate-all 2>&1 | tee "$CI_LOGS/mutation.log"
+          fi
+      - name: List surviving mutants with diffs
+        if: failure()
+        run: |
+          uv run python -m cosmic_ray.tools.report .mutation/session.sqlite --surviving-only --show-diff \
+            > "$CI_LOGS/mutation-survivors.txt" || true
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: mutation
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mutation-session
+          path: .mutation/
+          if-no-files-found: ignore
+
+  progress:
+    name: progress
+    # A fork PR has a read-only token and cannot comment.
+    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+      - name: Keep the PR comment up to date while the gates run
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ci_report.py watch
+
+  report:
+    name: report
+    if: always()
+    needs: [changes, prek, trufflehog, semgrep, trivy, pytest, test-matrix, mutation, progress] # progress ends first, so it cannot overwrite the report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: report-*
+          path: /tmp/ci-report
+          merge-multiple: true
+      - name: Build report
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/ci_report.py assemble
+      - name: Post the report as the PR comment
+        # Fork PRs get a read-only token, so commenting is best effort; the report is still in the run summary.
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ci_report.py post /tmp/ci-report/comment.md

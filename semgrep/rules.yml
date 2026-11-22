@@ -1,0 +1,351 @@
+# In-house rules for the design points that ruff and import-linter cannot see. Each rule has a test in
+# semgrep/rules.py; run `uv run semgrep --test semgrep` to check them. The layer limits live in pyproject.toml
+# ([tool.importlinter]); the rules for them are in .claude/rules/architecture.md.
+rules:
+  - id: optimal-discretizer-no-kwargs-bag
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A **kwargs parameter hides what the function reads (SOLID: I). Take the values as named parameters or as an
+      attrs option class.
+    pattern: |
+      def $F(..., **$K):
+          ...
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-no-elif-chain-on-one-value
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A chain that tests one value against three or more cases needs an edit for each new case (SOLID: O). Look the
+      case up in a table or use one class per case.
+    pattern: |
+      if $X == $A:
+          ...
+      elif $X == $B:
+          ...
+      elif $X == $C:
+          ...
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-no-not-implemented-stub
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A method that raises NotImplementedError breaks the promise of its base class (SOLID: L). Make the method
+      abstract with abc.abstractmethod, or remove it from the base class.
+    pattern-either:
+      - pattern: raise NotImplementedError
+      - pattern: raise NotImplementedError(...)
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-domain-does-no-io
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Code in core and domain runs in a plain unit test (SOLID: D). Read the file, print or call the service in the
+      adapters and pass the result in.
+    pattern-either:
+      - pattern: print(...)
+      - pattern: open(...)
+      - pattern: $P.read_text(...)
+      - pattern: $P.read_bytes(...)
+      - pattern: $P.write_text(...)
+      - pattern: $P.write_bytes(...)
+      - pattern: os.environ
+      - pattern: os.getenv(...)
+    paths:
+      include: ["/src/*/core/", "/src/*/domain/"]
+
+  - id: optimal-discretizer-no-manual-beartype
+    languages: [python]
+    severity: ERROR
+    message: >-
+      beartype_this_package already checks every function in optimal_discretizer. Remove the decorator
+      (.claude/rules/libraries.md).
+    pattern-either:
+      - pattern: |
+          @beartype
+          def $F(...): ...
+      - pattern: |
+          @beartype.beartype
+          def $F(...): ...
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-no-bare-value-error
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Raise a subclass of OptimalDiscretizerError from optimal_discretizer.core.exceptions, so callers can catch the errors of
+      optimal_discretizer apart from the errors of other code. Give an error class for a bad value ValueError as a
+      second base, so `except ValueError` catches it too.
+    pattern-either:
+      - pattern: raise ValueError
+      - pattern: raise ValueError(...)
+      - pattern: raise ValueError(...) from $CAUSE
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-return-attrs-not-container
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Return an attrs class, not a dict, a tuple of fields or a list of them, so a type checker knows each field and a
+      caller reads it by name. If the keys are data (not a fixed set of fields) or the container is the point (a
+      JSON fragment, a homogeneous interval), add `# nosemgrep: optimal-discretizer-return-attrs-not-container -- <reason>` to the
+      def line. See .claude/rules/types.md.
+    patterns:
+      - pattern: |
+          def $F(...) -> $R:
+              ...
+      - metavariable-pattern:
+          metavariable: $R
+          pattern-either:
+            - pattern: dict[...]
+            - pattern: list[dict[...]]
+            - pattern: tuple[...]
+            - pattern: list[tuple[...]]
+      # a tuple of one type and any length (`tuple[float, ...]`) is a sequence, not a bag of fields
+      - metavariable-regex:
+          metavariable: $R
+          regex: '^(?!tuple\[[^,\[\]]+,\s*\.\.\.\]$)'
+      - focus-metavariable: $R
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-no-naive-now
+    languages: [python]
+    severity: ERROR
+    message: >-
+      datetime.now() and datetime.utcnow() return a naive or a local time that hides its zone. Use
+      whenever.Instant.now() for an instant, or a whenever type with a zone (.claude/rules/libraries.md).
+    pattern-either:
+      - pattern: datetime.now(...)
+      - pattern: datetime.utcnow(...)
+      - pattern: datetime.datetime.now(...)
+      - pattern: datetime.datetime.utcnow(...)
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-no-frame-type-branches
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A branch on a pandas or polars frame type repeats the work of narwhals. Take the frame with
+      narwhals.from_native and call the narwhals API (.claude/rules/libraries.md).
+    pattern-either:
+      - pattern: isinstance($X, pd.DataFrame)
+      - pattern: isinstance($X, pl.DataFrame)
+      - pattern: isinstance($X, pl.LazyFrame)
+      - pattern: isinstance($X, pandas.DataFrame)
+      - pattern: isinstance($X, polars.DataFrame)
+      - pattern: isinstance($X, polars.LazyFrame)
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-no-sleep-loop
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A `while True` loop with a sleep is a hand-written retry with no jitter, no limit and no test mode. Use
+      @stamina.retry (.claude/rules/libraries.md).
+    pattern-either:
+      - pattern: |
+          while True:
+              ...
+              time.sleep(...)
+              ...
+      - pattern: |
+          while True:
+              ...
+              await asyncio.sleep(...)
+              ...
+      - pattern: |
+          while True:
+              ...
+              await anyio.sleep(...)
+              ...
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-structured-concurrency
+    languages: [python]
+    severity: ERROR
+    message: >-
+      asyncio.gather and asyncio.create_task start tasks that can outlive their caller or hide an error. Start them
+      in an anyio task group (.claude/rules/libraries.md).
+    pattern-either:
+      - pattern: asyncio.gather(...)
+      - pattern: asyncio.create_task(...)
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-skops-load-trusted-true
+    languages: [python]
+    severity: ERROR
+    message: >-
+      trusted=True makes skops.io load every type in the file, so the file can run code. Pass the list of the types
+      that you trust, after get_untrusted_types shows what the file holds (.claude/rules/libraries.md).
+    pattern-either:
+      - pattern: skops.io.load(..., trusted=True, ...)
+      - pattern: sio.load(..., trusted=True, ...)
+      - pattern: load(..., trusted=True, ...)
+
+  - id: optimal-discretizer-asdict-recurse-false
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Pass the fields of an attrs class on with `attrs.asdict(x, recurse=False)`. Without `recurse=False`, a field that
+      holds an attrs class becomes a dict, and the `**` call no longer fits. See .claude/rules/types.md.
+    patterns:
+      - pattern: $F(..., **attrs.asdict(...), ...)
+      - pattern-not: $F(..., **attrs.asdict(..., recurse=False, ...), ...)
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-no-object-type
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Name the type instead of `object`. `object` accepts every value, so neither pyrefly nor beartype checks anything,
+      as with `Any`. Use a named alias of `optimal_discretizer.core.custom_types` or a union of the real types. A parameter that exists to inspect a value of any type (a validator, a reader of an
+      untyped record) may keep `object`: add `# nosemgrep: optimal-discretizer-no-object-type -- <reason>` on the line of the
+      hint or on the line above it. See .claude/rules/types.md.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def $F(..., $P: $T, ...):
+                  ...
+          - pattern: |
+              def $F(..., $P: $T = $D, ...):
+                  ...
+          - pattern: |
+              def $F(..., *$P: $T, ...):
+                  ...
+          - pattern: |
+              def $F(..., **$P: $T, ...):
+                  ...
+          - pattern: |
+              def $F(...) -> $T:
+                  ...
+          - pattern: "$X: $T"
+          - pattern: "$X: $T = $V"
+          - pattern: "type $A = $T"
+      # the text of the hint, so a string annotation such as "list[object]" matches too
+      - metavariable-regex:
+          metavariable: $T
+          regex: '.*\bobject\b'
+      - focus-metavariable: $T
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-isinstance-abstract-type
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Check against the abstract type that the code needs, not the concrete class: `Mapping` instead of `dict`,
+      `Sequence` instead of `list`, `collections.abc.Set` instead of `set` or `frozenset`. A check of the concrete
+      class rejects a fitting object (a `MappingProxyType`, a `pandas` index), as a too narrow hint does. In a `match`,
+      use a mapping pattern (`case {...}:`) or a sequence pattern (`case [...]:`). See .claude/rules/types.md.
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: isinstance($X, $T)
+              - pattern: issubclass($X, $T)
+              - pattern: is_bearable($X, $T)
+              - pattern: die_if_unbearable($X, $T)
+              - pattern: $M.is_bearable($X, $T)
+              - pattern: $M.die_if_unbearable($X, $T)
+              - pattern: type($X) is $T
+              - pattern: type($X) is not $T
+              - pattern: type($X) == $T
+              - pattern: type($X) != $T
+              - pattern: type($X) in $T
+              - pattern: type($X) not in $T
+              - pattern: $X.__class__ is $T
+              - pattern: $X.__class__ is not $T
+              - pattern: $X.__class__ == $T
+              - pattern: $X.__class__ != $T
+              - pattern: $X.__class__ in $T
+              - pattern: $X.__class__ not in $T
+              - pattern: type($X).__name__ == $T
+              - pattern: type($X).__name__ != $T
+              - pattern: type($X).__name__ in $T
+              - pattern: type($X).__name__ not in $T
+              - pattern: $X.__class__.__name__ == $T
+              - pattern: $X.__class__.__name__ != $T
+              - pattern: $X.__class__.__name__ in $T
+              - pattern: $X.__class__.__name__ not in $T
+          # the text of the type, so a tuple of types, a union such as `str | dict`, a hint such as `dict[str, int]`
+          # and a name string such as "dict" match too
+          - metavariable-regex:
+              metavariable: $T
+              regex: '.*(?<![\w.])(dict|list|set|frozenset)\b'
+          - focus-metavariable: $T
+      # semgrep cannot parse every class pattern in a case, so a regex finds a concrete class before the guard
+      - pattern-regex: '(?m)^[ \t]*case[ \t]+(?:(?![ \t]if[ \t])[^:\n])*?(?<![\w.])(dict|list|set|frozenset)\('
+    paths:
+      include: ["/src/"]
+
+  - id: optimal-discretizer-polymorphism-not-type-branches
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Tell, don't ask: give each class a method and call it, instead of branches on the type or the attributes of one
+      value. Each new class otherwise needs an edit of every branch (SOLID: O). For classes that the package does not own,
+      use `functools.singledispatch`. A check that narrows one union at the edge of the code (a parsed record) may
+      stay: add `# nosemgrep: optimal-discretizer-polymorphism-not-type-branches -- <reason>` on the line of the first branch. See
+      .claude/rules/solid.md.
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  if $C1:
+                      ...
+                  elif $C2:
+                      ...
+              - pattern: |
+                  if $C1:
+                      ...
+                  ...
+                  if $C2:
+                      ...
+          # semgrep does not unify a metavariable across two sibling metavariable-pattern blocks, so the test of $C2
+          # sits inside the test of $C1, where $X is bound
+          - metavariable-pattern:
+              metavariable: $C1
+              patterns:
+                - pattern-either:
+                    - pattern: isinstance($X, $A)
+                    - pattern: issubclass($X, $A)
+                    - pattern: type($X) is $A
+                    - pattern: type($X) == $A
+                    - pattern: type($X) in $A
+                    - pattern: $X.__class__ is $A
+                    - pattern: $X.__class__ == $A
+                    - pattern: $X.__class__ in $A
+                    - pattern: type($X).__name__ == $A
+                    - pattern: $X.__class__.__name__ == $A
+                    - pattern: hasattr($X, $A)
+                - metavariable-pattern:
+                    metavariable: $C2
+                    pattern-either:
+                      - pattern: isinstance($X, $B)
+                      - pattern: issubclass($X, $B)
+                      - pattern: type($X) is $B
+                      - pattern: type($X) == $B
+                      - pattern: type($X) in $B
+                      - pattern: $X.__class__ is $B
+                      - pattern: $X.__class__ == $B
+                      - pattern: $X.__class__ in $B
+                      - pattern: type($X).__name__ == $B
+                      - pattern: $X.__class__.__name__ == $B
+                      - pattern: hasattr($X, $B)
+      # semgrep cannot parse a class pattern with arguments in a case, so a regex finds two class patterns in one match
+      - pattern-regex: '(?m)^[ \t]*case[ \t]+[A-Za-z_][\w.]*\(.*\n(?:(?![ \t]*match\b).*\n)*?[ \t]*case[ \t]+[A-Za-z_][\w.]*\('
+    paths:
+      include: ["/src/"]

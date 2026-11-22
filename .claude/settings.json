@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 300,
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty'); [ -f \"$f\" ] || exit 0; cd \"$CLAUDE_PROJECT_DIR\" && out=$($(command -v prek || echo 'uvx prek') run --files \"$f\" 2>&1) || { printf 'prek failed on %s. Fix every failure, then edit again.\\n%s\\n' \"$f\" \"$out\" >&2; exit 2; }"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 120,
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && $(command -v prek || echo 'uvx prek') install > /dev/null 2>&1 || echo 'prek install failed: commit messages are not checked before CI. Run prek install.' >&2"
+          }
+        ]
+      }
+    ]
+  }
+}

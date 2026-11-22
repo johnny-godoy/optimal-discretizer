@@ -1,0 +1,19 @@
+# Changes here will be overwritten by Copier. Run `copier update` to change the answers.
+_commit: 990ecb6
+_src_path: gh:johnny-godoy/modern-py
+author_email: johnny.godoy@ing.uchile.cl
+author_name: Johnny Godoy
+copyright_year: '2026'
+description: Exact 1-D k-means discretization for scikit-learn, with a Cython core.
+distribution_name: optimal-discretizer
+features:
+- proofs
+- publish
+github_owner: johnny-godoy
+license: MIT
+package_name: optimal_discretizer
+profiles: []
+project_name: optimal-discretizer
+python_version: '3.14'
+repo_name: optimal-discretizer
+required_approvals: 0

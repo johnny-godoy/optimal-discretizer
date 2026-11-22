@@ -1,0 +1,27 @@
+gronlund:
+  type: article
+  title: "Fast Exact k-Means, k-Medians and Bregman Divergence Clustering in 1D"
+  author: ["Grønlund, Allan", "Larsen, Kasper Green", "Mathiasen, Alexander", "Nielsen, Jesper Sindahl", "Schneider, Stefan", "Song, Mingzhou"]
+  date: 2017
+  url: https://arxiv.org/abs/1701.07204
+smawk:
+  type: article
+  title: "Geometric Applications of a Matrix-Searching Algorithm"
+  author: ["Aggarwal, Alok", "Klawe, Maria M.", "Moran, Shlomo", "Shor, Peter", "Wilber, Robert"]
+  date: 1987
+  parent:
+    type: periodical
+    title: Algorithmica
+    volume: 2
+lean4:
+  type: web
+  title: "The Lean 4 Theorem Prover and Programming Language"
+  author: ["de Moura, Leonardo", "Ullrich, Sebastian"]
+  date: 2021
+  url: https://lean-lang.org
+mathlib:
+  type: web
+  title: "The Lean Mathematical Library"
+  author: "The mathlib Community"
+  date: 2020
+  url: https://github.com/leanprover-community/mathlib4

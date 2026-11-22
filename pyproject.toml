@@ -1,70 +1,101 @@
-[build-system]
-requires = ["setuptools>=64", "cython>=3.0", "numpy>=1.21"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "optimal-discretizer"
 version = "0.1.0"
-description = "Optimal 1-D K-means discretizer compatible with Scikit-Learn, implemented in Cython"
+description = "Exact 1-D k-means discretization for scikit-learn, with a Cython core."
 readme = "README.md"
-requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["k-means", "discretization", "binning", "scikit-learn", "smawk", "dynamic-programming", "cython"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Cython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
+authors = [
+    { name = "Johnny Godoy", email = "johnny.godoy@ing.uchile.cl" }
+]
+# The oldest CPython that NumPy and scikit-learn still release for. CI tests each version in the range.
+requires-python = ">=3.11"
 dependencies = [
-    "kneed>=0.8.6",
-    "numpy>=1.21",
-    "scikit-learn>=1.0",
+    "attrs>=26.1.0",
+    "beartype>=0.23.1",
+    "kneed>=0.8.5",
+    "numpy>=1.26.0",
+    # validate_data of sklearn.utils.validation first exists in 1.6.
+    "scikit-learn>=1.6.0",
+    # the hints of the estimator name the sparse types, which validate_data rejects with the error of scikit-learn
+    "scipy>=1.11.0",
 ]
 
-[dependency-groups]
-dev = [
-    "pytest>=7.0",
-    "cython>=3.0",
-]
+[project.urls]
+Documentation = "https://johnny-godoy.github.io/optimal-discretizer/"
+Source = "https://github.com/johnny-godoy/optimal-discretizer"
+Issues = "https://github.com/johnny-godoy/optimal-discretizer/issues"
+Changelog = "https://github.com/johnny-godoy/optimal-discretizer/blob/main/CHANGELOG.md"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["src"]
+[tool.uv]
+# A relative span keeps the cutoff 7 days behind today, so uv never picks a release that is less than 7 days old.
+exclude-newer = "7 days"
+# The editable install rebuilds the kernel on import with the build group of this environment. An isolated build
+# environment is gone after the install, so the rebuild would fail.
+no-build-isolation-package = ["optimal-discretizer"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+# The editable build directory goes into .venv, where the template checks do not look for source files.
+[tool.uv.config-settings-package]
+optimal-discretizer = { "build-dir" = ".venv/meson-build" }
 
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
+# reason: the tools of the dev group (pyrefly, semgrep, cosmic-ray, the template scripts) run on the Python version of
+# .python-version only, while the package and its test group support every version of requires-python.
+[tool.uv.dependency-groups]
+dev = { requires-python = ">=3.14" }
+
+# meson-python builds the Cython kernel. A missing compiler or Cython stops the build with an error, and the sdist holds
+# only the files that git tracks, so the C file that Cython writes never reaches a distribution.
+[build-system]
+requires = ["meson-python>=0.18.0", "meson>=1.6.0", "cython>=3.1.0"]
+build-backend = "mesonpy"
 
 [tool.ruff]
+# reason: semgrep/rules.py holds bad code on purpose, as test data for the semgrep rules, and a fix by ruff would break
+# the annotations that semgrep reads.
+force-exclude = true
 exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
+    "semgrep",
     ".git",
-    ".git-rewrite",
-    ".hg",
-    ".ipynb_checkpoints",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pyenv",
-    ".pytest_cache",
-    ".pytype",
-    ".ruff_cache",
-    ".svn",
-    ".tox",
     ".venv",
-    ".vscode",
-    "__pypackages__",
-    "_build",
-    "buck-out",
     "build",
     "dist",
-    "node_modules",
-    "site-packages",
-    "venv",
+    "site",
 ]
 fix = true
 preview = true
 line-length = 120
 src = ["src"]
-target-version = "py313"
+target-version = "py311"
 unsafe-fixes = true
+
+# The package and its tests support Python 3.11, so ruff checks them at py311.
+[tool.ruff.per-file-target-version]
+# reason: recurring pattern: the template writes every script with syntax of the version in .python-version, the only
+# version that runs them.
+"scripts/**/*.py" = "py314"
+# reason: recurring pattern: the CI scripts run on the runner's python3, which is newer than the oldest supported one.
+".github/scripts/*.py" = "py314"
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -72,30 +103,255 @@ docstring-code-line-length = "dynamic"
 preview = true
 
 [tool.ruff.lint]
+# reason: copyright notices are an unusual requirement that this project does not impose on its source files. The
+# typing-only import rules are a recurring pattern: beartype reads every annotation of the package at run time, so an
+# import that only a hint uses is a run-time import, and a TYPE_CHECKING block would break the check. For the same
+# reason a type in a cast stays a name, not a string, so that the tools see the import.
 ignore = [
-    "CPY001",
-    "N803",
-    "N806",
+    "missing-copyright-notice",
+    "runtime-cast-value",
+    "typing-only-first-party-import",
+    "typing-only-standard-library-import",
+    "typing-only-third-party-import",
 ]
 preview = true
 select = ["ALL"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = [
-    "ANN201",
-    "D101",
-    "D102",
-    "D103",
-    "DOC201",
-    "DOC402",
-    "PLR2004",
-    "PLR6301",
-    "S101",
-    "SLF001",
+# reason: recurring pattern in tests/: pytest tests use bare assert, literal expected values and private members by design,
+# and are not public API, so docstrings are not required.
+"tests/**/*.py" = ["undocumented-public-function", "magic-value-comparison", "assert", "private-member-access"]
+
+# Each banned module names its replacement. Ruff fails in the editor and shows the message. An exception is an inline
+# `# ruff: ignore[banned-api] -- <reason>` on the import. .claude/rules/libraries.md points at this table.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"argparse".msg = "Use cyclopts. See .claude/rules/libraries.md."
+"arrow".msg = "Use whenever. See .claude/rules/libraries.md."
+"backoff".msg = "Use stamina. See .claude/rules/libraries.md."
+"boto3".msg = "Use aioboto3. See .claude/rules/libraries.md."
+"click".msg = "Use cyclopts. See .claude/rules/libraries.md."
+"cloudpickle".msg = "Use msgspec, orjson. See .claude/rules/libraries.md."
+"dataclasses".msg = "Use attrs. See .claude/rules/libraries.md."
+"dill".msg = "Use msgspec, orjson. See .claude/rules/libraries.md."
+"django".msg = "Use Litestar. See .claude/rules/libraries.md."
+"doctest".msg = "Use sybil. See .claude/rules/libraries.md."
+"fastapi".msg = "Use Litestar. See .claude/rules/libraries.md."
+"flask".msg = "Use Litestar. See .claude/rules/libraries.md."
+"httpx".msg = "Use aiohttp. See .claude/rules/libraries.md."
+"joblib".msg = "Use msgspec, orjson. See .claude/rules/libraries.md."
+"json".msg = "Use orjson. See .claude/rules/libraries.md."
+"logging".msg = "Use structlog. See .claude/rules/libraries.md."
+"loguru".msg = "Use structlog. See .claude/rules/libraries.md."
+"pandas".msg = "Use polars. See .claude/rules/libraries.md."
+"peewee".msg = "Use Piccolo. See .claude/rules/libraries.md."
+"pendulum".msg = "Use whenever. See .claude/rules/libraries.md."
+"pickle".msg = "Use msgspec, orjson. See .claude/rules/libraries.md."
+"pydantic".msg = "Use msgspec. See .claude/rules/libraries.md."
+"pydantic_settings".msg = "Use msgspec. See .claude/rules/libraries.md."
+"pytz".msg = "Use whenever. See .claude/rules/libraries.md."
+"requests".msg = "Use aiohttp. See .claude/rules/libraries.md."
+"shelve".msg = "Use msgspec, orjson. See .claude/rules/libraries.md."
+"simplejson".msg = "Use orjson. See .claude/rules/libraries.md."
+"sqlalchemy".msg = "Use Piccolo. See .claude/rules/libraries.md."
+"sqlmodel".msg = "Use Piccolo. See .claude/rules/libraries.md."
+"starlette".msg = "Use Litestar. See .claude/rules/libraries.md."
+"tenacity".msg = "Use stamina. See .claude/rules/libraries.md."
+"tortoise".msg = "Use Piccolo. See .claude/rules/libraries.md."
+"typeguard".msg = "Use beartype. See .claude/rules/libraries.md."
+"typer".msg = "Use cyclopts. See .claude/rules/libraries.md."
+"ujson".msg = "Use orjson. See .claude/rules/libraries.md."
+"urllib3".msg = "Use aiohttp. See .claude/rules/libraries.md."
+
+[dependency-groups]
+dev = [
+    "cosmic-ray>=8.7.0",
+    "cyclopts>=5.2.0",
+    "deptry>=0.25.1",
+    "import-linter>=2.15",
+    "orjson>=3.13.0",
+    "prek>=0.5.5",
+    "pyrefly>=1.4.0",
+    "pyyaml>=6.0.3",
+    "ruff>=0.17.1",
+    "scipy-stubs>=1.16.0",
+    "semgrep>=1.181.0",
+    "structlog>=26.1.0",
+    "types-pyyaml>=6.0.12.20260906",
+    "typst>=0.15.0",
+    "vulture>=2.16",
+    { include-group = "build" },
+    { include-group = "test" },
+    { include-group = "commits" },
+    { include-group = "release" },
+    { include-group = "dist" },
+]
+# meson-python rebuilds the Cython kernel of the editable install on import, so its build tools live in the environment
+build = [
+    "cython>=3.1.0",
+    "meson>=1.6.0",
+    "meson-python>=0.18.0",
+    "ninja>=1.11.1",
+]
+# the test matrix installs only this group (and build) on each supported Python version
+test = [
+    # tests/unit/conftest.py reads the coverage map of the mutation runs with orjson
+    "orjson>=3.13.0",
+    "pytest-cov>=7.1.0",
+    "sybil>=10.1.0",
+    { include-group = "wheel-test" },
+]
+# cibuildwheel installs only this group to test each wheel, the free-threaded builds included, for which orjson has no
+# build; the wheel tests run without the conftest files, so they need neither orjson nor sybil
+wheel-test = [
+    "hypothesis>=6.170.1",
+    "pytest>=9.1.1",
+]
+# the release workflow checks, installs and smoke-tests the built files with this group
+dist = [
+    "attrs>=26.1.0",
+    "cyclopts>=5.2.0",
+    "pydistcheck>=0.11.0",
+    "twine>=6.2.0",
+]
+docs = [
+    "mkdocstrings[python]>=1.0.7",
+    "zensical>=0.0.71",
+]
+# the commit-msg hook and the commits workflow install only this group to check commit messages
+commits = [
+    "commitizen>=4.19.2",
+]
+# the release workflow installs only this group to collect the changelog fragments
+release = [
+    "scriv>=1.8.0",
 ]
 
-[tool.ruff.lint.isort]
-known-first-party = ["src"]
+[tool.deptry.per_rule_ignores]
+# reason: recurring pattern: a runtime dependency that src/ does not import, because a command, a test or a later
+# feature uses it. The comment above each entry names its user.
+DEP002 = [
+    # the logger of the stack, which scripts/ use before the package logs
+    "structlog",
+]
 
-[tool.ruff.lint.pydocstyle]
-convention = "numpy"
+[tool.vulture]
+# reason: fixtures are used through pytest's name-based injection, which vulture cannot see.
+ignore_decorators = ["@pytest.fixture"]
+# reason: pytest reads pytestmark and the pytest_* hooks of a conftest.py by name, code never references them, so vulture
+# reports them as unused.
+ignore_names = ["pytestmark", "pytest_*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+addopts = "--cov=optimal_discretizer --cov-report=term-missing"
+# reason: beartype skips a function it cannot decorate and only warns, so the warning must fail the tests.
+filterwarnings = ["error::beartype.roar.BeartypeClawDecorWarning"]
+
+[tool.coverage.run]
+branch = true
+source = ["optimal_discretizer"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+
+[tool.importlinter]
+root_package = "optimal_discretizer"
+
+[[tool.importlinter.contracts]]
+name = "Layers: adapters over domain over core"
+type = "layers"
+layers = [
+    "optimal_discretizer.adapters",
+    "optimal_discretizer.domain",
+    "optimal_discretizer.core",
+]
+
+[tool.pyrefly]
+# The strict preset reports implicit `Any` in parameters, lambdas, attributes, empty containers and type arguments.
+preset = "strict"
+# The repository root holds the `scripts` and `tests` packages. A config turns off the guessed fallback search path.
+search-path = ["src", "."]
+
+# Raise the checks below to errors, because the strict preset leaves them off or at warning level. Three checks stay
+# off. implicit-bool: ruff prefers `if items:` to `if len(items) > 0:`. unused-call-result: an unused result, such as
+# the count from `Path.write_bytes`, is not a defect. explicit-any: parsed TOML and JSON have no static type, and the
+# strict preset already reports each implicit `Any`.
+# The ignore check reads each key of this table as a workaround, so each key has a reason. No key silences an error.
+[tool.pyrefly.errors]
+# reason: raised to an error because a submodule used without its own import breaks when the import order changes.
+implicit-import = "error"
+# reason: raised to an error because a name imported from a module that does not export it can disappear in a release.
+implicit-reexport = "error"
+# reason: raised to an error because an attribute first set outside __init__ is missing until that method runs.
+implicitly-defined-attribute = "error"
+# reason: raised to an error because an override without @override does not fail when the base method is renamed.
+missing-override-decorator = "error"
+# reason: raised to an error because a function that returns Any hides the real type from each caller.
+no-any-return = "error"
+# reason: raised to an error because a match that misses a case of an enum or Literal falls through without notice.
+non-exhaustive-match = "error"
+# reason: raised to an error because a cast to the type that the value already has hides nothing and only adds noise.
+redundant-cast = "error"
+# reason: raised to an error because a condition that is always true or always false is dead code or a bug.
+redundant-condition = "error"
+# reason: raised to an error because an argument of implicit Any type turns off the check of the parameter.
+unknown-argument-type = "error"
+# reason: raised to an error because an attribute of implicit Any type turns off the checks of each use.
+unknown-attribute-access = "error"
+# reason: raised to an error because an attribute of implicit Any type turns off the checks of each use.
+unknown-attribute-type = "error"
+# reason: raised to an error because a call result of implicit Any type turns off the checks of each use.
+unknown-return-type = "error"
+# reason: raised to an error because a variable of implicit Any type turns off the checks of each use.
+unknown-variable-type = "error"
+# reason: raised to an error because a comparison whose result is known before it runs is a bug in the logic.
+unnecessary-comparison = "error"
+# reason: raised to an error because a conversion to the type that the value already has is dead code.
+unnecessary-type-conversion = "error"
+# reason: raised to an error because an untyped class decorator replaces the class type with Any.
+untyped-class-decorator = "error"
+# reason: raised to an error because an untyped function decorator replaces the signature with Any.
+untyped-function-decorator = "error"
+# reason: raised to an error because a package with no types makes each of its names Any, so add its stubs.
+untyped-import = "error"
+# reason: raised to an error because an ignore that silences nothing must go, so that no stale ignore stays.
+unused-ignore = "error"
+
+# reason: .claude/rules/prek-and-ignores.md freezes scripts/ignore_sites.py, so its code cannot change, and an inline
+# ignore is an edit too. Its walk of the untyped ast and tomllib trees gives these three errors. All other checks still
+# apply to the file.
+[[tool.pyrefly.sub-config]]
+matches = "scripts/ignore_sites.py"
+errors = { missing-attribute = false, unknown-argument-type = false, unknown-variable-type = false }
+
+[tool.scriv]
+format = "md"
+fragment_directory = "changelog.d"
+categories = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
+md_header_level = "2"
+version = "literal: pyproject.toml: project.version"
+entry_title_template = "[{{ version }}] - {{ date.strftime('%Y-%m-%d') }}"
+
+# commitizen only checks commit messages and PR titles here. scriv and scripts/release.py manage the changelog and the
+# version, so `cz bump` and `cz changelog` are not used.
+[tool.commitizen]
+name = "cz_conventional_commits"
+
+# cibuildwheel builds the wheels for every supported CPython, the free-threaded builds included, and tests each wheel.
+# The tests import the installed wheel, not src: --noconftest leaves out the conftest files, which serve the editable
+# install of the dev environment and the mutation tests. Each runner builds for its own architecture.
+[tool.cibuildwheel]
+build = ["cp311-*", "cp312-*", "cp313-*", "cp314-*", "cp314t-*", "cp315-*", "cp315t-*"]
+build-frontend = "build[uv]"
+test-groups = ["wheel-test"]
+test-command = "pytest {project}/tests/unit/optimal_discretizer --noconftest -p no:cacheprovider -o addopts= -q"
+
+[tool.cibuildwheel.linux]
+archs = ["native"]
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]

@@ -1,1 +1,1 @@
-"""Module for all tests."""
+"""Tests of the project."""

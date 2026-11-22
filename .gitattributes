@@ -1,0 +1,8 @@
+# meson-python builds the source distribution with `git archive`, which leaves out the paths below. They serve the
+# repository, not a build of the package: agent rules, CI, the Lean proofs and the docs site.
+/.claude export-ignore
+/.claudeignore export-ignore
+/.github export-ignore
+/proofs export-ignore
+/docs export-ignore
+/zensical.toml export-ignore
