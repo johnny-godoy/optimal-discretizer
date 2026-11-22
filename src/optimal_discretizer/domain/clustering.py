@@ -118,7 +118,12 @@ def kmeans_1d(values: npt.ArrayLike, n_clusters: int) -> Clustering1D:
     starts = np.empty(n_clusters, dtype=np.intp)
     optimal_starts(sorted_values, starts)
     counts = np.diff(starts, append=sample_count)
-    centroids = np.add.reduceat(sorted_values, starts) / counts
+    # The mean of a run of sorted values lies between its first and its last value. Rounding can push it out of that
+    # range by an ulp, and then two clusters of equal values have centroids out of order. Clipping removes only the
+    # rounding, and the clipped centroids are in order, because the runs are in order.
+    first_values = sorted_values[starts]
+    last_values = sorted_values[starts + counts - 1]
+    centroids = np.clip(np.add.reduceat(sorted_values, starts) / counts, first_values, last_values)
     labels = np.empty(sample_count, dtype=np.int64)
     labels[order] = np.repeat(np.arange(n_clusters, dtype=np.int64), counts)
     inertia = float(np.square(array - centroids[labels]).sum())

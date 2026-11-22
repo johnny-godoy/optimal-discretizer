@@ -165,6 +165,14 @@ def test_more_clusters_than_distinct_values_gives_sorted_centroids_and_no_empty_
     assert sorted(set(clustering.labels.tolist())) == [0, 1, 2]
 
 
+def test_a_tie_split_over_two_clusters_keeps_the_centroids_sorted() -> None:
+    # Guard: the mean of three equal values rounded one ulp below the value itself, so the centroids fell out of order.
+    values = np.array([0.0] * 5 + [29.5] + [367.9310643007153] * 4)
+    clustering = kmeans_1d(values, 4)
+    assert np.all(np.diff(clustering.centroids) >= 0)
+    assert clustering.centroids[-1] == pytest.approx(367.9310643007153, rel=0, abs=0)
+
+
 def test_two_groups_are_separated() -> None:
     clustering = kmeans_1d(np.array([10.0, 1.0, 11.0, 2.0]), 2)
     assert clustering.labels.tolist() == [1, 0, 1, 0]
