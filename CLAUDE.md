@@ -7,7 +7,7 @@ template file (a check script, a hook, a rule) in the template, not here, or the
 </project>
 
 <commands>
-Requirements: Python 3.14 or later, `uv` and `just`. The `justfile` is the one entry point: CI calls the
+Requirements: Python 3.14 or later for the tools (the package supports 3.11 to 3.15), `uv`, `just` and a C compiler. The `justfile` is the one entry point: CI calls the
 same recipes, so a local run fails exactly when CI fails.
 
 ```bash
@@ -32,6 +32,13 @@ uv run python -m scripts.check_abstractions --search error base     # find a sha
 (errors and types). Only `adapters` imports a vendor SDK. Read `.claude/rules/architecture.md` before you add a module.
 import-linter, `scripts/check_layout.py` and the semgrep rules in `semgrep/` enforce the layout, and each fails
 `just check`.
+
+The Cython kernel `domain/optimal_partition.pyx` is the one compiled module; meson-python builds it (`meson.build`).
+`uv sync` installs the package as an editable install that compiles the kernel again on import. That install loads the
+package through its own finder, which beartype and import-linter cannot see, so `conftest.py` and
+`scripts/lint_imports.py` load the Python modules from `src` (`scripts/editable_imports.py`). The kernel is outside the
+coverage and mutation tools; `tests/unit/optimal_discretizer/domain/test_clustering.py` checks it against a plain dynamic
+program, and `proofs/OptimalDiscretizerProofs/KMeans1D/` models it. Change the kernel, the model and the paper together.
 </layout>
 
 <conventions>

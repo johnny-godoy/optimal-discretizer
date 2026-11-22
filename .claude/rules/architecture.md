@@ -8,7 +8,7 @@ the limits below, so a change that breaks one fails `just check`. Put new code w
 
 | Package | Job | May import |
 | --- | --- | --- |
-| `optimal_discretizer.adapters` | The edge: files, the network, the database, model files and the vendor SDKs. | `domain`, `core` |
+| `optimal_discretizer.adapters` | The edge: the scikit-learn estimator, and any file, network or vendor SDK. | `domain`, `core` |
 | `optimal_discretizer.domain` | Pure logic: functions of their arguments, with attrs classes as the types. | `core` |
 | `optimal_discretizer.core` | Shared kernel: errors and types. | No other `optimal_discretizer` package. |
 

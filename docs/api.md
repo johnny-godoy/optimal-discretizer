@@ -1,13 +1,23 @@
 # API reference
 
-## Errors
+Import every public name from `optimal_discretizer`, for example `from optimal_discretizer import kmeans_1d`.
+
+## The scikit-learn transformer
+
+::: optimal_discretizer.adapters.discretizer
+
+## Exact 1-D k-means
+
+::: optimal_discretizer.domain.clustering
+
+## Bin edges
+
+::: optimal_discretizer.domain.bin_edges
+
+## Scorers
+
+::: optimal_discretizer.domain.scorers
+
+## Errors and warnings
 
 ::: optimal_discretizer.core.exceptions
-
-## Summary statistics
-
-::: optimal_discretizer.domain.summary
-
-## Summary files
-
-::: optimal_discretizer.adapters.summary_file
