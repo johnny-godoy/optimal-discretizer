@@ -22,7 +22,12 @@
     strong[#kind #context counter(kind).display().]
     if name != none [ (#name).]
     [ ]
-    if italic { emph(body) } else { body }
+    // Italic text runs into the inline math that follows it ("for m" reads as "form"), so a statement in italic
+    // puts a thin space before each inline equation.
+    if italic {
+      show math.equation.where(block: false): it => h(0.12em) + it
+      emph(body)
+    } else { body }
     if lean != none {
       v(0.2em)
       set par(justify: false)

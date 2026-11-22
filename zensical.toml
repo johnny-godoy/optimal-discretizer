@@ -8,7 +8,7 @@ strict = true
 nav = [
   { Home = "index.md" },
   { Proofs = [
-    { Summary = "summary-proof.md" },
+    { "Exact 1-D k-means" = "kmeans-1d-proof.md" },
   ] },
   { "API reference" = "api.md" },
   { Changelog = "changelog.md" },
