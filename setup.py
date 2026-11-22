@@ -8,8 +8,8 @@ try:
     extensions = cythonize(
         [
             Extension(
-                "src._core",
-                sources=["src/_core.pyx"],
+                "optimal_discretizer._core",
+                sources=["src/optimal_discretizer/_core.pyx"],
                 include_dirs=[np.get_include()],
                 extra_compile_args=["-O3"],
             ),

@@ -5,8 +5,8 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from src._core import cluster  # noqa: PLC2701
-from src.scorers import (
+from optimal_discretizer._core import cluster  # noqa: PLC2701
+from optimal_discretizer.scorers import (
     CandidateFit,
     KneedInertiaScorer,
     MDLBitsKneeScorer,
@@ -14,7 +14,7 @@ from src.scorers import (
     mdl_gaussian_scorer,
     second_difference_scorer,
 )
-from src.transformer import OptimalDiscretizer
+from optimal_discretizer.transformer import OptimalDiscretizer
 
 
 def make_quantized_three_cluster_data() -> np.ndarray:

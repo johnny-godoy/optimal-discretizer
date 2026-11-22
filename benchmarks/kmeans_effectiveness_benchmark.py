@@ -18,15 +18,15 @@ import numpy.typing as npt
 from sklearn.cluster import KMeans
 
 try:
-    from src.transformer import OptimalDiscretizer
+    from optimal_discretizer.transformer import OptimalDiscretizer
 except ModuleNotFoundError as error:
-    if error.name != "src._core":
+    if error.name != "optimal_discretizer._core":
         raise
 
     import pyximport
 
     pyximport.install(setup_args={"include_dirs": np.get_include()}, language_level=3)
-    from src.transformer import OptimalDiscretizer
+    from optimal_discretizer.transformer import OptimalDiscretizer
 
 DEFAULT_REPEATS = 8
 DEFAULT_OUTPUT = Path(".benchmarks/kmeans_effectiveness_runs.jsonl")

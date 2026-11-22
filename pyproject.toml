@@ -21,14 +21,14 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src"]
+where = ["src"]
+include = ["optimal_discretizer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src/optimal_discretizer"]
 
 [tool.ruff]
 exclude = [
@@ -95,7 +95,7 @@ select = ["ALL"]
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["src"]
+known-first-party = ["optimal_discretizer"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

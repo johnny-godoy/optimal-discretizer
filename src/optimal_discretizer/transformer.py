@@ -21,9 +21,9 @@ import numpy.typing as npt
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted, validate_data
 
-from src._core import cluster as _cluster_core
-from src.scorers import CURVE_SCORER_REGISTRY, SCORER_REGISTRY, CandidateFit, CurveScorerProtocol, ScorerProtocol
-from src.utils import centroids_to_edges
+from optimal_discretizer._core import cluster as _cluster_core
+from optimal_discretizer.scorers import CURVE_SCORER_REGISTRY, SCORER_REGISTRY, CandidateFit, CurveScorerProtocol, ScorerProtocol
+from optimal_discretizer.utils import centroids_to_edges
 
 
 class OptimalDiscretizer(TransformerMixin, BaseEstimator):
