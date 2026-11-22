@@ -1,0 +1,4 @@
+# Replaces the default list, which skips tests/. The rules cover tests/ too.
+# reason: the rule tests hold the bad code on purpose.
+semgrep/
+.venv/

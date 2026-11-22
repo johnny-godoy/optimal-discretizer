@@ -1,0 +1,89 @@
+
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: docs changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    # The ruleset requires "docs build" on every pull request, so the build is skipped with a job-level `if` and not
+    # removed with a workflow-level `paths:` filter. Outside a pull request the build always runs.
+    outputs:
+      docs: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.docs }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            docs:
+              - "docs/**"
+              - "proofs/papers/**"
+
+              - "src/**"
+              - "README.md"
+              - "zensical.toml"
+              - "pyproject.toml"
+              - "uv.lock"
+              - "scripts/build_docs.py"
+              - ".github/workflows/docs.yml"
+              - ".github/actions/**"
+
+  build:
+    name: docs build
+    needs: [changes]
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Build the docs
+        # `just docs` runs scripts.build_docs: it runs `zensical build --strict` and fails on a griffe warning, so a
+        # broken link or a docstring that does not render fails the build. Zensical alone exits 0 on a griffe warning.
+        run: just docs
+      - name: Check the exports
+        # Zensical ignores a `hooks` setting without a warning, and an iframe target is raw HTML that no link
+        # check reads. A missing export would publish an empty page.
+        run: |
+          for paper in proofs/papers/*/paper.typ; do
+            name=$(basename "$(dirname "$paper")")
+            test -s "site/proofs/${name}.pdf" || { echo "::error::site/proofs/${name}.pdf is missing or empty"; exit 1; }
+          done
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: site
+
+  deploy:
+    name: deploy
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -1,0 +1,52 @@
+name: Commits
+
+# Each commit of a pull request, and its title, must be a conventional commit with a lower-case description, no period
+# at the end, and at most 72 characters (cz check, scripts/check_commits.py). Each commit also stays small, or names its
+# reason in a Large-Commit trailer. The title matters most when the pull request is squashed: it becomes the commit on
+# main. This workflow is apart from CI because it must run again when the title is edited.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commits-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  title:
+    name: title
+    # Dependabot writes "build(deps): bump ..." titles (dependabot.yml) that can be longer than 72 characters.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Check the title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$TITLE" > "$RUNNER_TEMP/title"
+          uv run --frozen --only-group commits cz check -l 72 --commit-msg-file "$RUNNER_TEMP/title"
+          uv run --frozen --only-group commits python -m scripts.check_commits --message-file "$RUNNER_TEMP/title"
+
+  commits:
+    name: commits
+    if: github.event.action != 'edited' && github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Check each commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          uv run --frozen --only-group commits cz check -l 72 --rev-range "$BASE..HEAD"
+          uv run --frozen --only-group commits python -m scripts.check_commits --base "$BASE"

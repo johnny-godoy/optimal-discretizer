@@ -1,0 +1,29 @@
+# Registry of the shared abstractions of src/optimal_discretizer. Read .claude/rules/reuse.md before you edit it.
+#
+# Register a contract or an entry point that more than one module uses. Do not register a private helper or a class
+# that only one module uses. Search first: `uv run python -m scripts.check_abstractions --search <words>`.
+# `uv run python -m scripts.check_abstractions --check` validates this file against the source.
+#
+# Fields: id (kebab-case, stable), responsibility (one sentence), owner (module or package that owns the symbol),
+# symbol (module:Name), consumers (descriptive, grants no import right), keywords (for the search), status (active or
+# deprecated), context (production unless the entry says otherwise).
+schema_version: 1
+
+capabilities:
+  - id: base-error
+    responsibility: Be the base class of every error that the package raises on purpose
+    owner: optimal_discretizer.core
+    symbol: optimal_discretizer.core.exceptions:OptimalDiscretizerError
+    consumers: [optimal_discretizer.domain, optimal_discretizer.adapters]
+    keywords: [error, exception, raise, base]
+    status: active
+
+  - id: summary
+    responsibility: Hold the summary statistics of a sequence of values
+    owner: optimal_discretizer.domain
+    symbol: optimal_discretizer.domain.summary:Summary
+    consumers: [optimal_discretizer.adapters]
+    keywords: [summary, statistics, mean, count]
+    status: active
+
+exceptions: []

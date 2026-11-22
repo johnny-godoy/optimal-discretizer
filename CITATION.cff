@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use optimal-discretizer in your work, cite it with the metadata in this file."
+title: "optimal-discretizer"
+abstract: "Exact 1-D k-means discretization for scikit-learn, with a Cython core."
+type: software
+license: MIT
+repository-code: "https://github.com/johnny-godoy/optimal-discretizer"
+url: "https://johnny-godoy.github.io/optimal-discretizer/"
+authors:
+  - name: "Johnny Godoy"
+    email: johnny.godoy@ing.uchile.cl

@@ -1,0 +1,19 @@
+name: Failure report
+description: Turn a failed gate's logs into a "what failed / how to fix" section and upload it for the report job
+inputs:
+  gate:
+    description: Gate id, one of the keys in .github/scripts/ci_report.py
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Build failure snippet
+      shell: bash
+      env:
+        GATE: ${{ inputs.gate }}
+      run: python3 .github/scripts/ci_report.py snippet "$GATE"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: report-${{ inputs.gate }}
+        path: /tmp/ci-report/${{ inputs.gate }}.md
+        if-no-files-found: ignore

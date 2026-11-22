@@ -1,0 +1,137 @@
+
+name: Release
+
+# After each merge to main, release the pending changelog fragments:
+#   version: choose the version (scripts/release.py), raise it with `uv version`, move the fragments into CHANGELOG.md
+#            with `scriv collect`, then push one release commit and the tag v<version>. With no fragment, it only tags
+#            the current version if that version has no tag yet. With nothing to release, the run stops here.
+#   build:   build the wheel and the sdist from the tag.
+#   github-release: create the GitHub release of the tag, with the CHANGELOG.md entry as notes and the built files.
+#   publish: upload it to PyPI with trusted publishing, only if the repository variable PUBLISH_TO_PYPI is "true".
+
+# A tag pushed with the default token starts no other workflow, so the build and the upload run here, not on the tag.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the release commit and the tag
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The ruleset of main (.github/rulesets/main.json) lets only an admin push without a pull request, so
+          # RELEASE_TOKEN is a token of an admin. Without the ruleset, the default token is enough.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Choose the version
+        id: next
+        run: |
+          version="$(uv run --frozen --only-group release python -m scripts.release)"
+          collect=true
+          if [ -z "$version" ]; then
+            collect=false
+            current="$(uv version --short --frozen)"
+            if ! git ls-remote --exit-code --tags origin "refs/tags/v$current" > /dev/null; then
+              version="$current"
+            fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "collect=$collect" >> "$GITHUB_OUTPUT"
+      - name: Collect the fragments into CHANGELOG.md
+        if: steps.next.outputs.version != '' && steps.next.outputs.collect == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          uv version "$VERSION" --no-sync
+          uv run --frozen --only-group release scriv collect --add
+          git add pyproject.toml uv.lock CHANGELOG.md
+          git commit -m "chore(release): $VERSION"
+      - name: Push the release commit and the tag
+        if: steps.next.outputs.version != ''
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          git tag "v$VERSION"
+          git push --atomic origin HEAD:main "refs/tags/v$VERSION"
+
+  build:
+    name: build
+    needs: version
+    if: needs.version.outputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.version.outputs.version }}
+      - uses: ./.github/actions/setup
+      - name: Check the tag matches the version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: test "$(uv version --short --frozen)" = "$VERSION"
+      - run: uv build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  github-release:
+    name: github release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.version.outputs.version }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Create the release from the changelog entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          uv run --frozen --only-group release scriv print --version "$VERSION" --output "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" dist/* --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+
+  publish:
+    name: publish
+    needs: build
+    if: vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/p/optimal-discretizer
+    permissions:
+      id-token: write # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv publish

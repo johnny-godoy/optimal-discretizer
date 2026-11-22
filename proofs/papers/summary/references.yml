@@ -1,0 +1,6 @@
+lean4:
+  type: web
+  title: "The Lean 4 Theorem Prover and Programming Language"
+  author: ["de Moura, Leonardo", "Ullrich, Sebastian"]
+  date: 2021
+  url: https://lean-lang.org
