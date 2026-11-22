@@ -107,3 +107,10 @@ def test_build_coverage_map_lists_the_tests_of_each_line_of_the_given_modules(tm
     data.write()
     coverage = mutation.build_coverage_map(tmp_path / ".coverage", tmp_path, {"src/pkg/m.py"})
     assert coverage == {"src/pkg/m.py": {"1": [], "2": ["t.py::a"], "3": ["t.py::a", "t.py::b"]}}
+
+
+def test_each_shard_copies_the_root_conftest() -> None:
+    # Guard: without the root conftest.py, the meson-python editable finder served the tests the unmutated src of the
+    # main checkout, so a mutant could not fail a test.
+    assert "conftest.py" in mutation.COPIED
+    assert all((mutation.ROOT / name).exists() for name in mutation.COPIED)

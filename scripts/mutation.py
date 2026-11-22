@@ -37,7 +37,8 @@ logger: structlog.typing.FilteringBoundLogger = structlog.get_logger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "cosmic-ray.toml"
 SESSION = ROOT / ".mutation" / "session.sqlite"
-COPIED = ("src", "tests", "scripts", "pyproject.toml", "cosmic-ray.toml")
+# The root conftest.py makes the tests import the shard's src, not the editable install of the main checkout.
+COPIED = ("src", "tests", "scripts", "conftest.py", "pyproject.toml", "cosmic-ray.toml")
 # the package under mutation, for example ``src/package``
 MODULE_PATH = tomllib.loads(CONFIG.read_text())["cosmic-ray"]["module-path"]
 POLL_SECONDS = 60
