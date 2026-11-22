@@ -4,7 +4,7 @@
 with Mathlib checks this claim for the compiled kernel `optimal_starts`. This page states what the proof shows, what it
 does not show, and how to check it.
 
-<p><a href="../proofs/kmeans-1d.pdf">Read the paper (PDF)</a></p>
+<p><a href="proofs/kmeans-1d.pdf">Read the paper (PDF)</a></p>
 
 ## What is proved
 
@@ -43,4 +43,6 @@ Run `lake exe cache get` and then `lake build` in `proofs/`. The build must end 
 `Build completed successfully`, and each `#print axioms` line must list only `propext`, `Classical.choice` and
 `Quot.sound`. The workflow `proofs.yml` runs the same check in CI.
 
-<iframe src="../proofs/kmeans-1d.pdf" title="Exact 1-D k-Means by SMAWK" width="100%" height="900"></iframe>
+<p><a href="proofs/kmeans-1d.pdf">Open the paper (PDF) in its own page</a></p>
+
+<iframe src="proofs/kmeans-1d.pdf" title="Exact 1-D k-Means by SMAWK" width="100%" height="900"></iframe>

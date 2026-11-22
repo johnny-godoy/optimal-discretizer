@@ -237,9 +237,9 @@ DEP002 = [
 [tool.vulture]
 # reason: fixtures are used through pytest's name-based injection, which vulture cannot see.
 ignore_decorators = ["@pytest.fixture"]
-# reason: pytest reads pytestmark and the pytest_* hooks of a conftest.py by name, code never references them, so vulture
-# reports them as unused.
-ignore_names = ["pytestmark", "pytest_*"]
+# reason: pytest reads pytestmark and the pytest_* hooks of a conftest.py by name, and html.parser calls the handle_*
+# methods of a parser subclass by name. Code never references them, so vulture reports them as unused.
+ignore_names = ["pytestmark", "pytest_*", "handle_*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]

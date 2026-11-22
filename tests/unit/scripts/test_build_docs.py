@@ -28,6 +28,7 @@ def sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, ...]
     """
     monkeypatch.setattr(build_docs, "PAPERS_ROOT", tmp_path / "papers")
     monkeypatch.setattr(build_docs, "PAPER_DIR", tmp_path / "docs" / "proofs")
+    monkeypatch.setattr(build_docs, "SITE_DIR", tmp_path / "site")
     del tmp_path, monkeypatch
     return ()
 
@@ -169,3 +170,90 @@ def test_build_and_serve_export_the_papers_before_the_site(
     monkeypatch.setattr(build_docs, "export_papers", lambda: events.append(["papers"]))
     build_docs.COMMANDS[command]()
     assert [event[0] if event == ["papers"] else event[2] for event in events[-2:]] == ["papers", "zensical"]
+
+
+PREFIX = "/optimal-discretizer/"
+
+
+def write_page(site: Path, page: str, body: str) -> None:
+    path = site / page
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"<html><body>{body}</body></html>", encoding="utf-8")
+
+
+def test_find_broken_links_reports_a_paper_frame_that_zensical_rewrote_out_of_the_site(tmp_path: Path) -> None:
+    # The bug: a raw-HTML address written relative to the built page gets one more ``../`` from Zensical, and the
+    # frame of the paper points outside the site.
+    write_page(tmp_path, "proofs/topic.pdf", "")
+    write_page(tmp_path, "topic-proof/index.html", '<iframe src="../../proofs/topic.pdf"></iframe>')
+    assert build_docs.find_broken_links(tmp_path, PREFIX) == ["topic-proof/index.html: ../../proofs/topic.pdf"]
+
+
+def test_find_broken_links_accepts_a_paper_frame_inside_the_site(tmp_path: Path) -> None:
+    (tmp_path / "proofs").mkdir()
+    (tmp_path / "proofs" / "topic.pdf").write_bytes(b"%PDF")
+    write_page(
+        tmp_path,
+        "topic-proof/index.html",
+        '<a href="../proofs/topic.pdf">PDF</a><iframe src="../proofs/topic.pdf"></iframe>',
+    )
+    assert build_docs.find_broken_links(tmp_path, PREFIX) == []
+
+
+def test_find_broken_links_reports_a_missing_file(tmp_path: Path) -> None:
+    write_page(tmp_path, "index.html", '<img src="missing.png">')
+    assert build_docs.find_broken_links(tmp_path, PREFIX) == ["index.html: missing.png"]
+
+
+def test_find_broken_links_resolves_a_directory_to_its_index_page(tmp_path: Path) -> None:
+    write_page(tmp_path, "api/index.html", "")
+    write_page(tmp_path, "index.html", '<a href="api/">API</a><a href=".">Home</a><a href="empty/">Empty</a>')
+    (tmp_path / "empty").mkdir()
+    assert build_docs.find_broken_links(tmp_path, PREFIX) == ["index.html: empty/"]
+
+
+def test_find_broken_links_skips_external_links_and_anchors(tmp_path: Path) -> None:
+    write_page(
+        tmp_path,
+        "index.html",
+        '<a href="https://example.com/x">x</a><a href="#top">top</a><a href="mailto:a@example.com">m</a><a>none</a>',
+    )
+    assert build_docs.find_broken_links(tmp_path, PREFIX) == []
+
+
+def test_find_broken_links_resolves_absolute_paths_under_the_site_path(tmp_path: Path) -> None:
+    write_page(tmp_path, "api/index.html", "")
+    write_page(
+        tmp_path,
+        "404.html",
+        '<a href="/optimal-discretizer/api/">API</a><a href="/optimal-discretizer/gone/">x</a><a href="/other/">y</a>',
+    )
+    assert build_docs.find_broken_links(tmp_path, PREFIX) == [
+        "404.html: /optimal-discretizer/gone/",
+        "404.html: /other/",
+    ]
+
+
+def test_find_broken_links_of_a_missing_site_is_empty(tmp_path: Path) -> None:
+    assert build_docs.find_broken_links(tmp_path / "site", PREFIX) == []
+
+
+@pytest.mark.parametrize(
+    ("site_url", "prefix"),
+    [("https://example.github.io/project/", "/project/"), ("https://example.com", "/")],
+)
+def test_site_path_prefix_reads_the_path_of_the_site_url(tmp_path: Path, site_url: str, prefix: str) -> None:
+    config = tmp_path / "zensical.toml"
+    config.write_text(f'[project]\nsite_url = "{site_url}"\n', encoding="utf-8")
+    assert build_docs.site_path_prefix(config) == prefix
+
+
+def test_build_fails_on_a_broken_link_of_the_site(
+    tmp_path: Path,
+    sources: tuple[Path, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del sources
+    record_runs(monkeypatch)
+    write_page(tmp_path / "site", "index.html", '<iframe src="../proofs/topic.pdf"></iframe>')
+    assert build_docs.build() == 1
