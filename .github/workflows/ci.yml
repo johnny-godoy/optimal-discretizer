@@ -161,9 +161,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - name: Scan with base rules
+        # semgrep 1.131.0 bundles a protobuf that cannot import on Python 3.14, the version of .python-version, so the
+        # scan runs on 3.13.
         run: |
           mkdir -p "$CI_LOGS"
-          uvx --from semgrep==1.131.0 --with 'setuptools<81' semgrep scan --config p/default --error --metrics=off \
+          uvx --python 3.13 --from semgrep==1.131.0 --with 'setuptools<81' semgrep scan --config p/default --error --metrics=off \
             --json-output="$CI_LOGS/semgrep.json" 2>&1 | tee "$CI_LOGS/semgrep.log"
       - uses: ./.github/actions/failure-report
         if: failure()
