@@ -1,2 +1,7 @@
-import OptimalDiscretizerProofs.Summary.Bounds
-import OptimalDiscretizerProofs.Summary.Axioms
+import OptimalDiscretizerProofs.KMeans1D.Smawk
+import OptimalDiscretizerProofs.KMeans1D.Cost
+import OptimalDiscretizerProofs.KMeans1D.DynamicProgram
+import OptimalDiscretizerProofs.KMeans1D.Contiguity
+import OptimalDiscretizerProofs.KMeans1D.Model
+import OptimalDiscretizerProofs.KMeans1D.Optimality
+import OptimalDiscretizerProofs.KMeans1D.Axioms

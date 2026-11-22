@@ -8,7 +8,7 @@ this directory are in `.claude/rules/proofs.md`.
 
 | Topic | Claim | Lean | Paper |
 | --- | --- | --- | --- |
-| `Summary` | The mean of `summarize` lies between its minimum and its maximum, in exact arithmetic. | `OptimalDiscretizerProofs/Summary/` | `papers/summary/paper.typ` |
+| `KMeans1D` | `optimal_starts` returns a partition whose cost is at most the k-means objective of every clustering of the sorted values, in exact arithmetic: SMAWK, the dynamic program, total monotonicity and contiguity. | `OptimalDiscretizerProofs/KMeans1D/` | `papers/kmeans-1d/paper.typ` |
 
 ## Layout
 
@@ -23,7 +23,10 @@ CI runs `lake build` when the Lean files or the pins change (`.github/workflows/
 
 ## Check the proofs
 
-Install [elan](https://github.com/leanprover/elan), the Lean version manager. Then run `just proofs`. The build must
+Install [elan](https://github.com/leanprover/elan), the Lean version manager. If elan is not available, install the
+release of `lean-toolchain` from the Lean release page and put its `bin` directory on `PATH`. Run
+`lake exe cache get` in `proofs/` to download the Mathlib cache, then run `just proofs`. Do not build Mathlib from
+source: it takes hours. The build must
 end with `Build completed successfully`. Each `#print axioms` line may list only `propext`, `Classical.choice` and
 `Quot.sound`.
 
