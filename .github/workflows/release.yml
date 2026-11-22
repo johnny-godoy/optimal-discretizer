@@ -1,17 +1,24 @@
-
 name: Release
 
-# After each merge to main, release the pending changelog fragments:
-#   version: choose the version (scripts/release.py), raise it with `uv version`, move the fragments into CHANGELOG.md
-#            with `scriv collect`, then push one release commit and the tag v<version>. With no fragment, it only tags
-#            the current version if that version has no tag yet. With nothing to release, the run stops here.
-#   build:   build the wheel and the sdist from the tag.
-#   github-release: create the GitHub release of the tag, with the CHANGELOG.md entry as notes and the built files.
-#   publish: upload it to PyPI with trusted publishing, only if the repository variable PUBLISH_TO_PYPI is "true".
-
+# After a green CI run on main, release the pending changelog fragments:
+#   version: check that CI passed on the head of main, choose the version (scripts/release.py), raise it with
+#            `uv version`, move the fragments into CHANGELOG.md with `scriv collect`, then push one release commit and
+#            the tag v<version> atomically. With no fragment, it only tags the current version if that version has no
+#            tag yet. With nothing to release, the run stops here.
+#   wheels:  build and test the wheels of every platform and the sdist from the tag (wheels.yml).
+#   check:   check that the tag matches the version, check the metadata and the contents of every file, install a
+#            wheel and the sdist in clean environments and run a smoke test, then write the checksums and the SBOM.
+#   github-release: create the GitHub release of the tag, with the CHANGELOG.md entry as notes, the built files, the
+#            checksums and the SBOM.
+#   publish: check the checksums, then upload to PyPI with attestations, only if the repository variable
+#            PUBLISH_TO_PYPI is "true".
+#   verify:  install the published version from PyPI in a clean environment and run the smoke test again.
 # A tag pushed with the default token starts no other workflow, so the build and the upload run here, not on the tag.
 on:
-  push:
+  # A release needs a green CI run, so it starts when the CI workflow of main ends, not when main changes.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -27,7 +34,10 @@ jobs:
     name: version
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A failed or cancelled CI run does not release. A newer CI run releases the commits of the older one.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     permissions:
+      actions: read # list the CI runs of the commit
       contents: write # push the release commit and the tag
     outputs:
       version: ${{ steps.next.outputs.version }}
@@ -38,8 +48,28 @@ jobs:
           # RELEASE_TOKEN is a token of an admin. Without the ruleset, the default token is enough.
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Check that CI passed on this commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          # A manual run releases the head of main. An automatic run releases the commit that its CI run checked.
+          if [ -n "$CI_COMMIT" ] && [ "$CI_COMMIT" != "$head" ]; then
+            echo "::notice::main moved to $head after CI ran on $CI_COMMIT. The CI run of $head releases it."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          passed="$(gh run list --workflow ci.yml --branch main --commit "$head" --status success --json databaseId --jq length)"
+          if [ "$passed" -eq 0 ]; then
+            echo "::error::No successful CI run exists for $head, so it is not released."
+            exit 1
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
       - name: Choose the version
         id: next
+        if: steps.ci.outputs.ok == 'true'
         run: |
           version="$(uv run --frozen --only-group release python -m scripts.release)"
           collect=true
@@ -71,12 +101,19 @@ jobs:
           git tag "v$VERSION"
           git push --atomic origin HEAD:main "refs/tags/v$VERSION"
 
-  build:
-    name: build
+  wheels:
+    name: wheels
     needs: version
     if: needs.version.outputs.version != ''
+    uses: ./.github/workflows/wheels.yml
+    with:
+      ref: v${{ needs.version.outputs.version }}
+
+  check:
+    name: check
+    needs: [version, wheels]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -86,15 +123,59 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: test "$(uv version --short --frozen)" = "$VERSION"
-      - run: uv build
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{wheels-*,sdist}"
+          path: dist/
+          merge-multiple: true
+      - name: Check that every file has the version of the tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          ls dist
+          for file in dist/*; do
+            case "$(basename "$file")" in
+              "optimal_discretizer-$VERSION-"*.whl | "optimal_discretizer-$VERSION.tar.gz") ;;
+              *) echo "::error::$file does not have the version $VERSION"; exit 1 ;;
+            esac
+          done
+      - name: Check the files that ship
+        # No generated C file, no compiled file in the sdist, and the compiled kernel in each wheel.
+        run: uv run --frozen python -m scripts.check_distributions dist
+      - name: Check the metadata of the files
+        # --strict fails on a warning, for example a long description that PyPI cannot render.
+        run: uv run --frozen --only-group dist twine check --strict dist/*
+      - name: Check the contents of the files
+        run: uv run --frozen --only-group dist pydistcheck --inspect dist/*
+      - name: Install a wheel and the sdist in clean environments and run the smoke test
+        # Both runs install the newest release of each dependency that the requirements allow, as a user gets them.
+        # The sdist builds the kernel from source with the compiler of the runner.
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          wheel="$(ls dist/optimal_discretizer-"$VERSION"-cp313-cp313-manylinux*x86_64*.whl)"
+          uv run --frozen python -m scripts.smoke_install "$wheel" "$VERSION" --python 3.13
+          uv run --frozen python -m scripts.smoke_install dist/optimal_discretizer-"$VERSION".tar.gz "$VERSION" --python 3.13
+      - name: Write the checksums and the SBOM
+        # The files go to their own directory, because `uv publish` uploads everything in dist/. The SBOM lists the
+        # packages of uv.lock, the set that the release was tested with.
+        run: |
+          mkdir release-assets
+          (cd dist && sha256sum -- * > ../release-assets/SHA256SUMS)
+          uv export --frozen --no-dev --no-emit-project --format cyclonedx1.5 \
+            --output-file release-assets/optimal-discretizer-sbom.cdx.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: release-assets/
 
   github-release:
     name: github release
-    needs: [version, build]
+    needs: [version, check]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -108,18 +189,21 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release-assets/
       - name: Create the release from the changelog entry
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           uv run --frozen --only-group release scriv print --version "$VERSION" --output "$RUNNER_TEMP/notes.md"
-          gh release create "v$VERSION" dist/* --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
-
+          gh release create "v$VERSION" dist/* release-assets/* --verify-tag --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
 
   publish:
     name: publish
-    needs: build
+    needs: check
     if: vars.PUBLISH_TO_PYPI == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -133,5 +217,38 @@ jobs:
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release-assets/
+      - name: Check that the files are the ones that the check job tested
+        run: (cd dist && sha256sum --check --strict ../release-assets/SHA256SUMS)
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      # With trusted publishing, uv publish also uploads a PEP 740 attestation of each file (--no-attestations turns it
+      # off). The attestation names this workflow and the commit that built the file.
       - run: uv publish
+
+  verify:
+    name: verify the published version
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.version.outputs.version }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Install the version from PyPI in a clean environment and run the smoke test
+        # PyPI can need some minutes to list a new version, so the step tries again.
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if uv run --frozen --only-group dist python -m scripts.smoke_install "optimal-discretizer==$VERSION" "$VERSION" --python 3.13; then
+              exit 0
+            fi
+            echo "Attempt $attempt failed. Waiting before the next attempt."
+            sleep 60
+          done
+          echo "::error::optimal-discretizer $VERSION does not install from PyPI or fails its smoke test."
+          exit 1
