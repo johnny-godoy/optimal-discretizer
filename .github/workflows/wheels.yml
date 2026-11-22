@@ -1,0 +1,84 @@
+name: Wheels
+
+# Build the wheels with cibuildwheel and the source distribution, and test each wheel.
+#   wheels: one job for each platform and architecture. cibuildwheel builds CPython 3.11 to 3.15, the free-threaded
+#           3.14t and 3.15t included, for manylinux and musllinux on Linux, and runs the unit tests of the package
+#           against each installed wheel ([tool.cibuildwheel] in pyproject.toml).
+#   sdist:  the source distribution, which meson-python writes from the files that git tracks.
+#   all wheels: one check that the ruleset can require, because the matrix names change with the platforms.
+# The release workflow calls this workflow on its tag (workflow_call), so a release ships the files that this workflow
+# built and tested. Pull requests and main run it too, so a change that breaks a platform fails before a release.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: The git reference to build, for example the tag of a release.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # A call from the release workflow shares the group of the release run, so it gets its own group.
+  group: wheels-${{ inputs.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  wheels:
+    name: wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # musllinux has no scikit-learn wheel, so its tests build scikit-learn from source once for each Python version.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each runner builds for its own architecture, so no job emulates another one.
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Build and test the wheels
+        uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        with:
+          output-dir: wheelhouse
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: ./.github/actions/setup # the build group of the environment builds the sdist
+      - run: uv build --sdist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  all-wheels:
+    name: all wheels
+    needs: [wheels, sdist]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail if a wheel or the sdist failed
+        env:
+          WHEELS: ${{ needs.wheels.result }}
+          SDIST: ${{ needs.sdist.result }}
+        run: test "$WHEELS" = success && test "$SDIST" = success

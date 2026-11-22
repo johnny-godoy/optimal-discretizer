@@ -330,3 +330,21 @@ entry_title_template = "[{{ version }}] - {{ date.strftime('%Y-%m-%d') }}"
 # version, so `cz bump` and `cz changelog` are not used.
 [tool.commitizen]
 name = "cz_conventional_commits"
+
+# cibuildwheel builds the wheels for every supported CPython, the free-threaded builds included, and tests each wheel.
+# The tests import the installed wheel, not src: --noconftest leaves out the conftest files, which serve the editable
+# install of the dev environment and the mutation tests. Each runner builds for its own architecture.
+[tool.cibuildwheel]
+build = ["cp311-*", "cp312-*", "cp313-*", "cp314-*", "cp314t-*", "cp315-*", "cp315t-*"]
+build-frontend = "build[uv]"
+test-groups = ["test"]
+test-command = "pytest {project}/tests/unit/optimal_discretizer --noconftest -p no:cacheprovider -o addopts= -q"
+
+[tool.cibuildwheel.linux]
+archs = ["native"]
+
+[tool.cibuildwheel.macos]
+archs = ["native"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]

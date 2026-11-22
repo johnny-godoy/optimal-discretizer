@@ -12,7 +12,7 @@ import tracemalloc
 import numpy as np
 import numpy.typing as npt
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from optimal_discretizer.domain.optimal_partition import optimal_starts
 
@@ -24,6 +24,9 @@ from optimal_discretizer.core.exceptions import (
 )
 from optimal_discretizer.domain.clustering import kmeans_1d
 
+# The wheel tests of cibuildwheel run without the conftest files, so the tests set their own timing: a slow or emulated
+# runner must not fail on time.
+_NO_DEADLINE = settings(deadline=None)
 # Inputs with many equal values, to exercise the ties of SMAWK.
 _TIED_VALUES = st.lists(st.integers(min_value=-3, max_value=3).map(float), min_size=1, max_size=40)
 _SPREAD_VALUES = st.lists(
@@ -111,6 +114,7 @@ def assert_valid_clustering(values: npt.NDArray[np.float64], cluster_count: int)
     return clustering.inertia
 
 
+@_NO_DEADLINE
 @given(values=st.one_of(_TIED_VALUES, _SPREAD_VALUES), data=st.data())
 def test_kmeans_1d_matches_the_plain_dynamic_program(values: list[float], data: st.DataObject) -> None:
     array = np.array(values)
@@ -121,6 +125,7 @@ def test_kmeans_1d_matches_the_plain_dynamic_program(values: list[float], data: 
     assert inertia == pytest.approx(expected, rel=1e-9, abs=1e-9 * scale)
 
 
+@_NO_DEADLINE
 @given(values=st.lists(st.integers(min_value=-2, max_value=4).map(float), min_size=1, max_size=7), data=st.data())
 def test_kmeans_1d_matches_a_search_over_every_clustering(values: list[float], data: st.DataObject) -> None:
     array = np.array(values)
@@ -128,6 +133,7 @@ def test_kmeans_1d_matches_a_search_over_every_clustering(values: list[float], d
     assert kmeans_1d(array, cluster_count).inertia == pytest.approx(brute_force_inertia(array, cluster_count), abs=1e-9)
 
 
+@_NO_DEADLINE
 @given(values=st.one_of(_TIED_VALUES, _SPREAD_VALUES))
 def test_one_cluster_holds_every_value(values: list[float]) -> None:
     array = np.array(values)
@@ -136,6 +142,7 @@ def test_one_cluster_holds_every_value(values: list[float]) -> None:
     assert clustering.centroids[0] == pytest.approx(array.mean())
 
 
+@_NO_DEADLINE
 @given(values=st.one_of(_TIED_VALUES, _SPREAD_VALUES))
 def test_one_cluster_for_each_value_has_no_error(values: list[float]) -> None:
     array = np.array(values)
