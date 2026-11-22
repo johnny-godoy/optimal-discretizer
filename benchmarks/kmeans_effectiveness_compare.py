@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import argparse
 import datetime as dt
-import json
 import math
 import statistics
 import sys
-from dataclasses import dataclass
 from pathlib import Path
+
+import attrs
+import cyclopts
+import orjson
 
 DEFAULT_INPUT = Path(".benchmarks/kmeans_effectiveness_runs.jsonl")
 DEFAULT_PLOT_DIR = Path(".benchmarks/reports")
@@ -22,7 +23,7 @@ except ModuleNotFoundError:
     go = None
 
 
-@dataclass(slots=True)
+@attrs.define
 class RunSummary:
     """Parsed benchmark run payload with computed convenience fields."""
 
@@ -34,72 +35,56 @@ class RunSummary:
 
     @property
     def short_commit(self) -> str:
-        """Return short commit hash for compact labels."""
+        """The short commit hash, for compact labels."""
         return self.commit[:7] if self.commit != "unknown" else "unknown"
 
     @property
     def label(self) -> str:
-        """Return compact identifier for logs and plots."""
+        """The compact identifier of the run, for logs and plots."""
         stamp = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
         return f"{stamp} | {self.short_commit}"
 
     @property
     def main_mean_ms(self) -> float:
-        """Return average main mean_ms across benchmark problems."""
+        """The mean run time of the main algorithm over the problems, in milliseconds."""
         values = [problem_metrics["main"]["mean_ms"] for problem_metrics in self.problems.values()]
         return statistics.fmean(values)
 
     @property
     def main_mean_gap_pct(self) -> float:
-        """Return average main mean_gap_pct across benchmark problems."""
+        """The mean gap of the main algorithm to the optimum over the problems, in percent."""
         values = [problem_metrics["main"]["mean_gap_pct"] for problem_metrics in self.problems.values()]
         return statistics.fmean(values)
 
     @property
     def main_optimality_min_pct(self) -> float:
-        """Return minimum main optimality across benchmark problems."""
+        """The smallest share of optimal results of the main algorithm over the problems, in percent."""
         values = [problem_metrics["main"]["optimality_pct"] for problem_metrics in self.problems.values()]
         return min(values)
 
     @property
     def lloyd_optimality_mean_pct(self) -> float:
-        """Return average Lloyd optimality across benchmark problems."""
+        """The mean share of optimal results of Lloyd's algorithm over the problems, in percent."""
         values = [problem_metrics["lloyd"]["optimality_pct"] for problem_metrics in self.problems.values()]
         return statistics.fmean(values)
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line options for benchmark run comparison."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--input",
-        type=Path,
-        default=DEFAULT_INPUT,
-        help="JSONL file produced by benchmarks/kmeans_effectiveness_benchmark.py.",
-    )
-    parser.add_argument(
-        "--top",
-        type=int,
-        default=5,
-        help="How many top qualified runs to print in the ranking.",
-    )
-    parser.add_argument(
-        "--plot-dir",
-        type=Path,
-        default=DEFAULT_PLOT_DIR,
-        help="Directory where interactive HTML plots are written.",
-    )
-    parser.add_argument(
-        "--plots",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Generate interactive HTML plots (default: true).",
-    )
-    return parser.parse_args()
-
-
 def load_runs(path: Path) -> list[RunSummary]:
-    """Load benchmark runs from JSONL and sort by timestamp."""
+    """Load the benchmark runs of a JSONL file, sorted by time.
+
+    Returns
+    -------
+    list of RunSummary
+        The runs, oldest first.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file does not exist.
+    ValueError
+        If a line is not a valid run.
+
+    """
     if not path.exists():
         msg = f"Input file does not exist: {path}"
         raise FileNotFoundError(msg)
@@ -110,8 +95,8 @@ def load_runs(path: Path) -> list[RunSummary]:
             line = raw_line.strip()
             if not line:
                 continue
-            payload = json.loads(line)
             try:
+                payload = orjson.loads(line)
                 timestamp_utc = str(payload["timestamp_utc"])
                 timestamp = dt.datetime.fromisoformat(timestamp_utc)
                 run = RunSummary(
@@ -121,7 +106,7 @@ def load_runs(path: Path) -> list[RunSummary]:
                     repeats=int(payload["repeats"]),
                     problems=dict(payload["problems"]),
                 )
-            except (KeyError, TypeError, ValueError) as error:
+            except (KeyError, TypeError, ValueError) as error:  # ValueError covers orjson.JSONDecodeError too
                 msg = f"Invalid run payload at line {line_number} in {path}: {error}"
                 raise ValueError(msg) from error
             loaded.append(run)
@@ -131,7 +116,14 @@ def load_runs(path: Path) -> list[RunSummary]:
 
 
 def is_main_fully_optimal(run: RunSummary) -> bool:
-    """Return true when main is effectively 100% optimal on all problems."""
+    """Tell whether the main algorithm is optimal on every trial of every problem.
+
+    Returns
+    -------
+    bool
+        ``True`` if the share of optimal results is 100% on each problem, up to rounding.
+
+    """
     return all(
         math.isclose(problem_metrics["main"]["optimality_pct"], OPTIMALITY_TARGET, rel_tol=0.0, abs_tol=1e-9)
         for problem_metrics in run.problems.values()
@@ -195,7 +187,14 @@ def print_summary(runs: list[RunSummary], top: int) -> None:
 
 
 def generate_plots(runs: list[RunSummary], plot_dir: Path) -> list[Path]:
-    """Generate interactive HTML plots and return written paths."""
+    """Write the interactive HTML plots.
+
+    Returns
+    -------
+    list of Path
+        The files that were written. The list is empty if plotly is not installed or there are no runs.
+
+    """
     if go is None:
         sys.stdout.write("\nSkipping plots: plotly is not installed.\n")
         return []
@@ -298,19 +297,51 @@ def generate_plots(runs: list[RunSummary], plot_dir: Path) -> list[Path]:
     return written
 
 
-def main() -> None:
-    """Execute run comparison and optionally generate plots."""
-    args = parse_args()
-    runs = load_runs(args.input)
-    print_summary(runs, top=args.top)
+app: cyclopts.App = cyclopts.App(
+    name="kmeans_effectiveness_compare",
+    help=__doc__.splitlines()[0] if __doc__ else None,
+    result_action="return_value",
+)
 
-    if args.plots:
-        written_plots = generate_plots(runs=runs, plot_dir=args.plot_dir)
+
+@app.default
+def main(
+    *,
+    input_path: Path = DEFAULT_INPUT,
+    top: int = 5,
+    plot_dir: Path = DEFAULT_PLOT_DIR,
+    plots: bool = True,
+) -> int:
+    """Compare the benchmark runs, and write interactive HTML plots.
+
+    Parameters
+    ----------
+    input_path : Path
+        The JSONL file that benchmarks/kmeans_effectiveness_benchmark.py writes.
+    top : int
+        How many of the best qualified runs to print in the ranking.
+    plot_dir : Path
+        The directory for the interactive HTML plots.
+    plots : bool
+        Write the plots. ``--no-plots`` prints the summary only.
+
+    Returns
+    -------
+    int
+        0 when the comparison is done.
+
+    """
+    runs = load_runs(input_path)
+    print_summary(runs, top=top)
+
+    if plots:
+        written_plots = generate_plots(runs=runs, plot_dir=plot_dir)
         if written_plots:
             sys.stdout.write("\nWrote interactive plots:\n")
             for path in written_plots:
                 sys.stdout.write(f"  - {path}\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(app())

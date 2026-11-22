@@ -10,26 +10,21 @@ Reads the JSONL produced by ``randomforest_discretization_benchmark.py`` and:
   - ``rf_speed_quality_pareto.html``  — scatter with Pareto frontier marked
 """
 
-from __future__ import annotations
-
-import argparse
-import json
 import operator
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
+import attrs
+import cyclopts
+import orjson
+
+SpeedMetric: TypeAlias = Literal["total_time", "rf_fit_time", "disc_fit_time", "disc_transform_time", "rf_predict_time"]
 DEFAULT_INPUT = Path(".benchmarks/randomforest_discretization_runs.jsonl")
 DEFAULT_PLOT_DIR = Path(".benchmarks/reports")
-DEFAULT_SPEED_METRIC = "total_time"
+DEFAULT_SPEED_METRIC: SpeedMetric = "total_time"
 
-SPEED_METRIC_CHOICES = [
-    "total_time",
-    "rf_fit_time",
-    "disc_fit_time",
-    "disc_transform_time",
-    "rf_predict_time",
-]
 
 VARIANT_COLORS: dict[str, str] = {
     "none": "#2ca02c",
@@ -42,8 +37,8 @@ try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 except ModuleNotFoundError:
-    go = None  # type: ignore[assignment]
-    make_subplots = None  # type: ignore[assignment]
+    go = None
+    make_subplots = None
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +66,7 @@ def load_runs(path: Path) -> list[dict[str, Any]]:
         If ``path`` does not exist.
     ValueError
         If any line in the file is not valid JSON.
+
     """
     if not path.exists():
         msg = f"Input file does not exist: {path}"
@@ -83,8 +79,8 @@ def load_runs(path: Path) -> list[dict[str, Any]]:
             if not line:
                 continue
             try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as err:
+                payload = orjson.loads(line)
+            except orjson.JSONDecodeError as err:
                 msg = f"Invalid JSON at line {line_number} in {path}: {err}"
                 raise ValueError(msg) from err
 
@@ -150,6 +146,7 @@ def pareto_front(
     -------
     list of bool
         ``is_pareto[i]`` is True iff ``points[i]`` is non-dominated.
+
     """
     n = len(points)
     is_pareto = [True] * n
@@ -201,6 +198,7 @@ def aggregate_by_key(
     -------
     list of dict
         One aggregated record per unique combination of group_keys.
+
     """
     groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for row in rows:
@@ -219,8 +217,16 @@ def aggregate_by_key(
     return aggregated
 
 
+QUALITY_KEYS = {"classification": "roc_auc_mean", "regression": "r2_mean"}
+"""The primary quality metric of each task. Both are higher-is-better."""
+QUALITY_LABELS = {"classification": "ROC-AUC", "regression": "R²"}
+EXTRA_QUALITY_KEYS = {"classification": ["accuracy_mean", "macro_f1_mean"], "regression": ["rmse_mean"]}
+DISCRETIZED_VARIANTS = ["quantile", "kmeans", "optimal"]
+DEFAULT_N_BINS_FOR_PLOT = [2, 4, 8, 16, 32, 64]
+
+
 def primary_quality_key(task: str) -> str:
-    """Return the primary quality metric key for a given task.
+    """Return the primary quality metric of a task.
 
     Parameters
     ----------
@@ -230,23 +236,111 @@ def primary_quality_key(task: str) -> str:
     Returns
     -------
     str
-        Key name in the aggregated records.
+        The key of the metric in the aggregated records.
+
     """
-    if task == "classification":
-        return "roc_auc_mean"
-    return "r2_mean"
+    return QUALITY_KEYS.get(task, "r2_mean")
 
 
-def quality_higher_better() -> bool:
-    """Return True iff the primary quality metric is higher-is-better.
+@attrs.frozen
+class DatasetView:
+    """The records of one dataset, aggregated over the forest grid for each variant and bin count.
+
+    Attributes
+    ----------
+    name : str
+        The dataset.
+    task : str
+        ``"classification"`` or ``"regression"``.
+    quality_key : str
+        The primary quality metric.
+    aggregated : list of dict
+        One record for each variant and bin count, with the mean of each metric.
+
+    """
+
+    name: str
+    task: str
+    quality_key: str
+    aggregated: list[dict[str, Any]]
+
+    @property
+    def quality_label(self) -> str:
+        """The name of the primary quality metric, for the text and the plots."""
+        return QUALITY_LABELS.get(self.task, "R²")
+
+    def variant_by_bins(self, variant: str) -> dict[Any, dict[str, Any]]:
+        """Return the records of one variant, by bin count.
+
+        Parameters
+        ----------
+        variant : str
+            The variant.
+
+        Returns
+        -------
+        dict
+            The records of the variant, by bin count.
+
+        """
+        return {record["n_bins"]: record for record in self.aggregated if record["variant"] == variant}
+
+    def best_of(self, variant: str) -> dict[str, Any] | None:
+        """Return the record of a variant with the best quality.
+
+        Parameters
+        ----------
+        variant : str
+            The variant.
+
+        Returns
+        -------
+        dict or None
+            The record, or ``None`` if the variant has no record.
+
+        """
+        records = [record for record in self.aggregated if record["variant"] == variant]
+        return max(records, key=operator.itemgetter(self.quality_key)) if records else None
+
+
+def dataset_views(rows: Sequence[dict[str, Any]], speed_key: str) -> list[DatasetView]:
+    """Aggregate the records of each dataset over the forest grid.
+
+    Parameters
+    ----------
+    rows : Sequence of dict
+        All result records.
+    speed_key : str
+        The speed metric to aggregate.
 
     Returns
     -------
-    bool
-        Always True: both ROC-AUC (classification) and R² (regression) are
-        higher-is-better metrics.
+    list of DatasetView
+        One view for each dataset, sorted by name. A record without the quality or the speed metric is left out.
+
     """
-    return True  # both roc_auc and r2 are higher-better
+    views: list[DatasetView] = []
+    for name in sorted({row["dataset"] for row in rows}):
+        dataset_rows = [row for row in rows if row["dataset"] == name]
+        task = dataset_rows[0].get("task", "unknown")
+        quality_key = primary_quality_key(task)
+        metrics = [speed_key, quality_key, *EXTRA_QUALITY_KEYS.get(task, []), "disc_fit_time_mean"]
+        aggregated = aggregate_by_key(dataset_rows, ["variant", "n_bins"], metrics)
+        aggregated = [record for record in aggregated if quality_key in record and speed_key in record]
+        views.append(DatasetView(name=name, task=task, quality_key=quality_key, aggregated=aggregated))
+    return views
+
+
+def _bins_text(record: dict[str, Any]) -> str:
+    """Return the bin count of a record as text, ``N/A`` for the variant without bins.
+
+    Returns
+    -------
+    str
+        The text.
+
+    """
+    return "N/A" if record.get("n_bins") is None else str(record["n_bins"])
 
 
 # ---------------------------------------------------------------------------
@@ -254,225 +348,270 @@ def quality_higher_better() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def print_summary(rows: list[dict[str, Any]], speed_metric: str) -> None:  # noqa: C901, PLR0912, PLR0914, PLR0915
-    """Print per-dataset textual summary and Pareto-optimal configurations.
+def _write_pareto(view: DatasetView, speed_key: str, speed_metric: str) -> None:
+    """Write the configs on the Pareto front of speed and quality."""
+    flags = pareto_front(view.aggregated, speed_key=speed_key, quality_key=view.quality_key)
+    front = sorted(
+        (record for record, flag in zip(view.aggregated, flags, strict=True) if flag),
+        key=operator.itemgetter(view.quality_key),
+        reverse=True,
+    )
+    sys.stdout.write(f"  Pareto-optimal configs (speed={speed_metric}, quality={view.quality_label}):\n")
+    for record in front:
+        sys.stdout.write(
+            f"    variant={record['variant']:10s}  n_bins={_bins_text(record):4s}  "
+            f"{view.quality_label}={record[view.quality_key]:.4f}  {speed_metric}={record[speed_key]:.4f}s\n",
+        )
+    if not front:
+        sys.stdout.write("    (none found)\n")
+    sys.stdout.write("\n")
+
+
+def _write_best_per_variant(view: DatasetView, speed_key: str, speed_metric: str) -> None:
+    """Write the bin count with the best quality of each variant."""
+    sys.stdout.write(f"  Best {view.quality_label} per variant (mean across RF grid):\n")
+    for variant in sorted({record["variant"] for record in view.aggregated}):
+        best = view.best_of(variant)
+        if best is not None:
+            sys.stdout.write(
+                f"    {variant:10s}  best at n_bins={_bins_text(best):4s}  "
+                f"{view.quality_label}={best[view.quality_key]:.4f}  {speed_metric}={best[speed_key]:.4f}s\n",
+            )
+    sys.stdout.write("\n")
+
+
+def _wins(
+    first: dict[Any, dict[str, Any]],
+    second: dict[Any, dict[str, Any]],
+    better: Callable[[dict[str, Any], dict[str, Any]], bool],
+) -> str:
+    """Count the bin counts at which the first variant is better than the second.
+
+    Returns
+    -------
+    str
+        ``wins/comparisons``.
+
+    """
+    common = sorted(set(first) & set(second))
+    return f"{sum(1 for bins in common if better(first[bins], second[bins]))}/{len(common)}"
+
+
+def _verdict_lines(view: DatasetView, speed_key: str) -> list[str]:
+    """Answer the three headline questions of the benchmark for one dataset.
+
+    Returns
+    -------
+    list of str
+        One line for each question.
+
+    """
+    quality = view.quality_key
+    optimal, kmeans, quantile = (view.variant_by_bins(name) for name in ("optimal", "kmeans", "quantile"))
+    lines = []
+    if set(optimal) & set(kmeans):
+        quality_wins = _wins(optimal, kmeans, lambda first, second: first[quality] > second[quality])
+        speed_wins = _wins(optimal, kmeans, lambda first, second: first[speed_key] < second[speed_key])
+        lines.append(
+            f"1. optimal vs kmeans: optimal wins quality in {quality_wins} bin-count comparisons; "
+            f"wins speed in {speed_wins} comparisons.",
+        )
+    else:
+        lines.append("1. optimal vs kmeans: insufficient data for comparison.")
+    common = sorted(set(optimal) & set(quantile))
+    if common:
+        quality_wins = _wins(optimal, quantile, lambda first, second: first[quality] > second[quality])
+        quantile_cost = sum(quantile[bins].get("disc_fit_time_mean", 0.0) for bins in common) / len(common)
+        optimal_cost = sum(optimal[bins].get("disc_fit_time_mean", 0.0) for bins in common) / len(common)
+        lines.append(
+            f"2. optimal vs quantile: optimal wins quality in {quality_wins} comparisons; mean disc_fit_time: "
+            f"quantile={quantile_cost:.4f}s optimal={optimal_cost:.4f}s.",
+        )
+    else:
+        lines.append("2. optimal vs quantile: insufficient data.")
+    lines.append(_verdict_versus_none(view))
+    return lines
+
+
+def _verdict_versus_none(view: DatasetView) -> str:
+    """Tell whether a discretized variant beats the forest on the raw features.
+
+    Returns
+    -------
+    str
+        The line of the third question.
+
+    """
+    baseline = view.best_of("none")
+    if baseline is None:
+        return "3. 'none' variant not present; cannot compare."
+    baseline_quality = baseline[view.quality_key]
+    winners = [
+        f"{variant}@n_bins={_bins_text(best)}({best[view.quality_key]:.4f})"
+        for variant in DISCRETIZED_VARIANTS
+        if (best := view.best_of(variant)) is not None and best[view.quality_key] > baseline_quality
+    ]
+    if winners:
+        return f"3. Discretized variants beating none ({view.quality_label}={baseline_quality:.4f}): " + ", ".join(
+            winners,
+        )
+    return (
+        f"3. No discretized variant beats none ({view.quality_label}={baseline_quality:.4f}); "
+        "pre-discretization does not help quality on this dataset."
+    )
+
+
+def print_summary(rows: list[dict[str, Any]], speed_metric: str) -> None:
+    """Print the summary of each dataset: the Pareto front, the best bin counts and the verdict.
 
     Parameters
     ----------
     rows : list of dict
         All result records loaded from the JSONL file.
     speed_metric : str
-        The speed metric to use for Pareto analysis.
+        The speed metric of the Pareto analysis.
+
     """
     sys.stdout.write(f"Loaded records: {len(rows)}\n")
     if not rows:
         sys.stdout.write("No records found.\n")
         return
-
-    datasets = sorted({r["dataset"] for r in rows})
-    sys.stdout.write(f"Datasets: {', '.join(datasets)}\n\n")
-
     speed_key = f"{speed_metric}_mean"
-
-    for ds_name in datasets:
-        ds_rows = [r for r in rows if r["dataset"] == ds_name]
-        task = ds_rows[0].get("task", "unknown")
-        q_key = primary_quality_key(task)
-        higher = quality_higher_better()
-        q_label = "ROC-AUC" if task == "classification" else "R²"
-
-        sys.stdout.write(f"═══ {ds_name} ({task}) ═══\n")
-
-        # Aggregate over RF hyperparameter grid (mean across n_estimators x max_depth)
-        agg_keys = [speed_key, q_key]
-        if task == "classification":
-            agg_keys += ["accuracy_mean", "macro_f1_mean"]
-        else:
-            agg_keys += ["rmse_mean"]
-
-        agg = aggregate_by_key(ds_rows, ["variant", "n_bins"], agg_keys)
-        agg = [a for a in agg if q_key in a and speed_key in a]
-
-        if not agg:
+    views = dataset_views(rows, speed_key)
+    sys.stdout.write(f"Datasets: {', '.join(view.name for view in views)}\n\n")
+    for view in views:
+        sys.stdout.write(f"═══ {view.name} ({view.task}) ═══\n")
+        if not view.aggregated:
             sys.stdout.write("  No aggregated data available.\n\n")
             continue
-
-        # --- Pareto analysis ---
-        is_pareto = pareto_front(agg, speed_key=speed_key, quality_key=q_key, higher_quality_better=higher)
-        pareto_points = [p for p, flag in zip(agg, is_pareto, strict=True) if flag]
-        pareto_points_sorted = sorted(pareto_points, key=operator.itemgetter(q_key), reverse=higher)
-
-        sys.stdout.write(f"  Pareto-optimal configs (speed={speed_metric}, quality={q_label}):\n")
-        if pareto_points_sorted:
-            for pt in pareto_points_sorted:
-                nb = pt.get("n_bins")
-                nb_str = str(nb) if nb is not None else "N/A"
-                sys.stdout.write(
-                    f"    variant={pt['variant']:10s}  n_bins={nb_str:4s}  "
-                    f"{q_label}={pt[q_key]:.4f}  {speed_metric}={pt[speed_key]:.4f}s\n",
-                )
-        else:
-            sys.stdout.write("    (none found)\n")
-        sys.stdout.write("\n")
-
-        # --- Best per variant at each n_bins (aggregated across RF grid) ---
-        sys.stdout.write(f"  Best {q_label} per variant (mean across RF grid):\n")
-        variants_seen = sorted({r.get("variant") for r in ds_rows if r.get("variant")})
-        for variant in variants_seen:
-            variant_rows = [a for a in agg if a["variant"] == variant]
-            if not variant_rows:
-                continue
-            best = (
-                max(variant_rows, key=operator.itemgetter(q_key))
-                if higher
-                else min(variant_rows, key=operator.itemgetter(q_key))
-            )
-            nb = best.get("n_bins")
-            nb_str = str(nb) if nb is not None else "N/A"
-            sys.stdout.write(
-                f"    {variant:10s}  best at n_bins={nb_str:4s}  "
-                f"{q_label}={best[q_key]:.4f}  {speed_metric}={best[speed_key]:.4f}s\n",
-            )
-        sys.stdout.write("\n")
-
-        # --- Verdict: three headline questions ---
+        _write_pareto(view, speed_key, speed_metric)
+        _write_best_per_variant(view, speed_key, speed_metric)
         sys.stdout.write("  Verdict:\n")
-
-        # Q1: optimal vs kmeans at equal n_bins
-        opt_rows = {a["n_bins"]: a for a in agg if a["variant"] == "optimal"}
-        km_rows = {a["n_bins"]: a for a in agg if a["variant"] == "kmeans"}
-        common_bins = sorted(set(opt_rows) & set(km_rows))
-        if common_bins:
-            opt_wins_quality = sum(
-                1
-                for nb in common_bins
-                if (
-                    opt_rows[nb][q_key] > km_rows[nb][q_key]
-                    if higher
-                    else opt_rows[nb][q_key] < km_rows[nb][q_key]
-                )
-            )
-            opt_wins_speed = sum(
-                1 for nb in common_bins if opt_rows[nb][speed_key] < km_rows[nb][speed_key]
-            )
-            sys.stdout.write(
-                f"    1. optimal vs kmeans: optimal wins quality in {opt_wins_quality}/{len(common_bins)} "
-                f"bin-count comparisons; wins speed in {opt_wins_speed}/{len(common_bins)} comparisons.\n",
-            )
-        else:
-            sys.stdout.write("    1. optimal vs kmeans: insufficient data for comparison.\n")
-
-        # Q2: optimal/kmeans vs quantile at equal n_bins
-        qt_rows = {a["n_bins"]: a for a in agg if a["variant"] == "quantile"}
-        if qt_rows and opt_rows:
-            common_bins_oq = sorted(set(opt_rows) & set(qt_rows))
-            if common_bins_oq:
-                opt_vs_qt_quality = sum(
-                    1
-                    for nb in common_bins_oq
-                    if (
-                        opt_rows[nb][q_key] > qt_rows[nb][q_key]
-                        if higher
-                        else opt_rows[nb][q_key] < qt_rows[nb][q_key]
-                    )
-                )
-                qt_disc_cost = (
-                    sum(qt_rows[nb].get("disc_fit_time_mean", 0.0) for nb in common_bins_oq)
-                    / max(len(common_bins_oq), 1)
-                )
-                opt_disc_cost = (
-                    sum(opt_rows[nb].get("disc_fit_time_mean", 0.0) for nb in common_bins_oq)
-                    / max(len(common_bins_oq), 1)
-                )
-                sys.stdout.write(
-                    f"    2. optimal vs quantile: optimal wins quality in {opt_vs_qt_quality}/{len(common_bins_oq)} "
-                    f"comparisons; mean disc_fit_time: quantile={qt_disc_cost:.4f}s optimal={opt_disc_cost:.4f}s.\n",
-                )
-            else:
-                sys.stdout.write("    2. optimal vs quantile: insufficient data.\n")
-        else:
-            sys.stdout.write("    2. optimal vs quantile: insufficient data.\n")
-
-        # Q3: does any discretized variant beat none?
-        none_rows = [a for a in agg if a["variant"] == "none"]
-        if none_rows:
-            none_q = none_rows[0][q_key]
-            discretized_variants = ["quantile", "kmeans", "optimal"]
-            beats_none: list[str] = []
-            for dv in discretized_variants:
-                dv_agg = [a for a in agg if a["variant"] == dv]
-                best_dv = (
-                    max(dv_agg, key=operator.itemgetter(q_key))
-                    if (higher and dv_agg)
-                    else (min(dv_agg, key=operator.itemgetter(q_key)) if dv_agg else None)
-                )
-                if best_dv is not None:
-                    nb_str = str(best_dv.get("n_bins"))
-                    if (higher and best_dv[q_key] > none_q) or (not higher and best_dv[q_key] < none_q):
-                        beats_none.append(f"{dv}@n_bins={nb_str}({best_dv[q_key]:.4f})")
-            if beats_none:
-                sys.stdout.write(
-                    f"    3. Discretized variants beating none ({q_label}={none_q:.4f}): "
-                    + ", ".join(beats_none)
-                    + "\n",
-                )
-            else:
-                sys.stdout.write(
-                    f"    3. No discretized variant beats none ({q_label}={none_q:.4f}); "
-                    "pre-discretization does not help quality on this dataset.\n",
-                )
-        else:
-            sys.stdout.write("    3. 'none' variant not present; cannot compare.\n")
-
+        for line in _verdict_lines(view, speed_key):
+            sys.stdout.write(f"    {line}\n")
         sys.stdout.write("\n")
-
-
-def _expand_none_variant(
-    agg: list[dict[str, Any]],
-    q_key: str,
-    x_vals: list[Any],
-) -> tuple[list[Any], list[float]]:
-    """Expand the 'none' variant to cover all available n_bins values for plotting.
-
-    Parameters
-    ----------
-    agg : list of dict
-        Aggregated records for the current dataset.
-    q_key : str
-        Quality metric key.
-    x_vals : list
-        Current x-axis values (may be empty for none variant).
-
-    Returns
-    -------
-    tuple of (list, list)
-        Updated ``(x_vals, y_vals)`` spanning all discretized bin counts.
-    """
-    none_pts = [a for a in agg if a["variant"] == "none"]
-    if not none_pts:
-        return x_vals, []
-    none_q = none_pts[0].get(q_key)
-    if none_q is None:
-        return x_vals, []
-    x_none = sorted({p["n_bins"] for p in agg if p.get("n_bins") is not None})
-    if x_none:
-        return x_none, [none_q] * len(x_none)
-    return x_vals or DEFAULT_N_BINS_FOR_PLOT, [none_q] * len(x_vals or DEFAULT_N_BINS_FOR_PLOT)
 
 
 # ---------------------------------------------------------------------------
 # Plot generation
 # ---------------------------------------------------------------------------
 
-DEFAULT_N_BINS_FOR_PLOT = [2, 4, 8, 16, 32, 64]
+
+def _line_points(
+    view: DatasetView,
+    variant: str,
+    value_key: str,
+    *,
+    expand_none: bool,
+) -> tuple[list[Any], list[float]]:
+    """Return the points of the line of one variant: the bin counts and the values.
+
+    The variant ``none`` has no bin count. With ``expand_none``, it becomes a flat line over the bin counts of the
+    other variants, so that the plot compares each variant with the forest on the raw features.
+
+    Returns
+    -------
+    tuple of (list, list)
+        The bin counts and the values.
+
+    """
+    if variant == "none":
+        baseline = view.best_of("none")
+        if not expand_none or baseline is None:
+            return [], []
+        bins = sorted({record["n_bins"] for record in view.aggregated if record.get("n_bins") is not None})
+        bins = bins or DEFAULT_N_BINS_FOR_PLOT
+        return bins, [baseline[value_key]] * len(bins)
+    points = sorted(view.variant_by_bins(variant).items(), key=operator.itemgetter(0))
+    return [bins for bins, _ in points], [record[value_key] for _, record in points]
 
 
-def generate_plots(  # noqa: C901, PLR0912, PLR0914, PLR0915
-    rows: list[dict[str, Any]],
-    plot_dir: Path,
-    speed_metric: str,
-) -> list[Path]:
-    """Generate interactive HTML plots and return written paths.
+def _line_figure(
+    views: Sequence[DatasetView],
+    title: str,
+    value_key: Callable[[DatasetView], str],
+    value_label: Callable[[DatasetView], str],
+    *,
+    expand_none: bool,
+) -> Any:  # ruff: ignore[any-type] -- a plotly figure; plotly is an optional dependency and is not typed
+    """Build a figure with one subplot for each dataset and one line for each variant.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        The figure.
+
+    """
+    figure = make_subplots(rows=max(1, len(views)), cols=1, subplot_titles=[view.name for view in views])
+    for row_index, view in enumerate(views, start=1):
+        for variant in sorted({record["variant"] for record in view.aggregated}):
+            bins, values = _line_points(view, variant, value_key(view), expand_none=expand_none)
+            if not bins:
+                continue
+            figure.add_trace(
+                go.Scatter(
+                    x=bins,
+                    y=values,
+                    mode="lines+markers",
+                    name=variant,
+                    line={"color": VARIANT_COLORS.get(variant)},
+                    marker={"size": 7},
+                    legendgroup=variant,
+                    showlegend=row_index == 1,
+                    hovertemplate=f"n_bins=%{{x}}<br>{value_label(view)}=%{{y:.4f}}<extra>{variant}</extra>",
+                ),
+                row=row_index,
+                col=1,
+            )
+        figure.update_yaxes(title_text=value_label(view), row=row_index, col=1)
+        figure.update_xaxes(title_text="n_bins", row=row_index, col=1)
+    figure.update_layout(title=title, height=350 * max(1, len(views)))
+    return figure
+
+
+def _pareto_traces(view: DatasetView, speed_key: str, speed_metric: str, *, first_row: bool) -> list[Any]:
+    """Return the scatter traces of one dataset: the configs off the Pareto front, faint, and those on it, as stars.
+
+    Returns
+    -------
+    list of plotly.graph_objects.Scatter
+        The traces.
+
+    """
+    flags = pareto_front(view.aggregated, speed_key=speed_key, quality_key=view.quality_key)
+    traces = []
+    for variant in sorted(VARIANT_COLORS):
+        for on_front in (False, True):
+            points = [
+                record
+                for record, flag in zip(view.aggregated, flags, strict=True)
+                if record["variant"] == variant and flag == on_front
+            ]
+            if not points:
+                continue
+            marker: dict[str, Any] = {"color": VARIANT_COLORS[variant], "size": 8, "opacity": 0.4}
+            if on_front:
+                marker = {"color": VARIANT_COLORS[variant], "size": 14, "symbol": "star", "line": {"width": 1}}
+            name = f"{variant} (Pareto)" if on_front else variant
+            traces.append(
+                go.Scatter(
+                    x=[record[speed_key] for record in points],
+                    y=[record[view.quality_key] for record in points],
+                    mode="markers",
+                    name=name,
+                    marker=marker,
+                    legendgroup=name,
+                    showlegend=first_row,
+                    text=[_bins_text(record) for record in points],
+                    hovertemplate=f"{speed_metric}=%{{x:.4f}}<br>{view.quality_label}=%{{y:.4f}}"
+                    f"<br>n_bins=%{{text}}<extra>{name}</extra>",
+                ),
+            )
+    return traces
+
+
+def generate_plots(rows: list[dict[str, Any]], plot_dir: Path, speed_metric: str) -> list[Path]:
+    """Write the interactive HTML plots: quality and speed against the bin count, and the Pareto front.
 
     Parameters
     ----------
@@ -486,222 +625,48 @@ def generate_plots(  # noqa: C901, PLR0912, PLR0914, PLR0915
     Returns
     -------
     list of Path
-        Paths of written HTML files.
+        Paths of written HTML files. The list is empty if plotly is not installed or there are no records.
+
     """
     if go is None:
         sys.stdout.write("\nSkipping plots: plotly is not installed.\n")
         return []
-
     if not rows:
         return []
-
     plot_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
     speed_key = f"{speed_metric}_mean"
-
-    datasets = sorted({r["dataset"] for r in rows})
-
-    # --- Plot 1: quality vs n_bins ---
-    fig_q = make_subplots(
-        rows=max(1, len(datasets)),
-        cols=1,
-        subplot_titles=datasets,
-        shared_xaxes=False,
-    )
-
-    for ds_idx, ds_name in enumerate(datasets, start=1):
-        ds_rows = [r for r in rows if r["dataset"] == ds_name]
-        task = ds_rows[0].get("task", "unknown")
-        q_key = primary_quality_key(task)
-        q_label = "ROC-AUC" if task == "classification" else "R²"
-
-        agg = aggregate_by_key(ds_rows, ["variant", "n_bins"], [q_key, speed_key])
-
-        variants_seen = sorted({a["variant"] for a in agg})
-        for variant in variants_seen:
-            variant_pts = sorted(
-                [a for a in agg if a["variant"] == variant and a.get("n_bins") is not None],
-                key=operator.itemgetter("n_bins"),
-            )
-            x_vals = [p["n_bins"] for p in variant_pts]
-            y_vals = [p[q_key] for p in variant_pts]
-            if variant == "none" and ds_rows:
-                x_vals, y_vals = _expand_none_variant(agg, q_key, x_vals)
-            if not x_vals:
-                continue
-            hover_q = (
-                f"n_bins=%{{x}}<br>{q_label}=%{{y:.4f}}"
-                f"<br>dataset={ds_name}<extra>{variant}</extra>"
-            )
-            fig_q.add_trace(
-                go.Scatter(
-                    x=x_vals,
-                    y=y_vals,
-                    mode="lines+markers",
-                    name=variant,
-                    line={"color": VARIANT_COLORS.get(variant)},
-                    marker={"size": 7},
-                    legendgroup=variant,
-                    showlegend=(ds_idx == 1),
-                    hovertemplate=hover_q,
-                ),
-                row=ds_idx,
-                col=1,
-            )
-        fig_q.update_yaxes(title_text=q_label, row=ds_idx, col=1)
-        fig_q.update_xaxes(title_text="n_bins", row=ds_idx, col=1)
-
-    fig_q.update_layout(title="RF Quality vs n_bins by Variant", height=350 * max(1, len(datasets)))
-    q_path = plot_dir / "rf_quality_vs_bins.html"
-    fig_q.write_html(q_path, include_plotlyjs="cdn")
-    written.append(q_path)
-
-    # --- Plot 2: speed vs n_bins ---
-    fig_s = make_subplots(
-        rows=max(1, len(datasets)),
-        cols=1,
-        subplot_titles=datasets,
-        shared_xaxes=False,
-    )
-
-    for ds_idx, ds_name in enumerate(datasets, start=1):
-        ds_rows = [r for r in rows if r["dataset"] == ds_name]
-        agg = aggregate_by_key(ds_rows, ["variant", "n_bins"], [speed_key])
-
-        variants_seen = sorted({a["variant"] for a in agg})
-        for variant in variants_seen:
-            variant_pts = sorted(
-                [a for a in agg if a["variant"] == variant and a.get("n_bins") is not None],
-                key=operator.itemgetter("n_bins"),
-            )
-            x_vals = [p["n_bins"] for p in variant_pts]
-            y_vals = [p[speed_key] for p in variant_pts]
-            if not x_vals:
-                continue
-            hover_s = (
-                f"n_bins=%{{x}}<br>{speed_metric}=%{{y:.4f}}s"
-                f"<br>dataset={ds_name}<extra>{variant}</extra>"
-            )
-            fig_s.add_trace(
-                go.Scatter(
-                    x=x_vals,
-                    y=y_vals,
-                    mode="lines+markers",
-                    name=variant,
-                    line={"color": VARIANT_COLORS.get(variant)},
-                    marker={"size": 7},
-                    legendgroup=variant,
-                    showlegend=(ds_idx == 1),
-                    hovertemplate=hover_s,
-                ),
-                row=ds_idx,
-                col=1,
-            )
-        fig_s.update_yaxes(title_text=f"{speed_metric} (s)", row=ds_idx, col=1)
-        fig_s.update_xaxes(title_text="n_bins", row=ds_idx, col=1)
-
-    fig_s.update_layout(title=f"RF {speed_metric} vs n_bins by Variant", height=350 * max(1, len(datasets)))
-    s_path = plot_dir / "rf_speed_vs_bins.html"
-    fig_s.write_html(s_path, include_plotlyjs="cdn")
-    written.append(s_path)
-
-    # --- Plot 3: speed-quality Pareto scatter ---
-    fig_p = make_subplots(
-        rows=max(1, len(datasets)),
-        cols=1,
-        subplot_titles=datasets,
-        shared_xaxes=False,
-    )
-
-    for ds_idx, ds_name in enumerate(datasets, start=1):
-        ds_rows = [r for r in rows if r["dataset"] == ds_name]
-        task = ds_rows[0].get("task", "unknown")
-        q_key = primary_quality_key(task)
-        q_label = "ROC-AUC" if task == "classification" else "R²"
-        higher = quality_higher_better()
-
-        agg = aggregate_by_key(ds_rows, ["variant", "n_bins"], [q_key, speed_key])
-        agg = [a for a in agg if q_key in a and speed_key in a]
-        if not agg:
-            continue
-
-        is_pareto = pareto_front(agg, speed_key=speed_key, quality_key=q_key, higher_quality_better=higher)
-
-        for variant in sorted(VARIANT_COLORS):
-            variant_pts = [p for p in agg if p["variant"] == variant]
-            if not variant_pts:
-                continue
-            variant_pareto = [is_pareto[agg.index(p)] for p in variant_pts]
-            x_all = [p[speed_key] for p in variant_pts]
-            y_all = [p[q_key] for p in variant_pts]
-            nb_all = [str(p.get("n_bins", "N/A")) for p in variant_pts]
-            pareto_mask = list(variant_pareto)
-
-            # non-pareto points
-            x_np = [x for x, flag in zip(x_all, pareto_mask, strict=True) if not flag]
-            y_np = [y for y, flag in zip(y_all, pareto_mask, strict=True) if not flag]
-            nb_np = [n for n, flag in zip(nb_all, pareto_mask, strict=True) if not flag]
-            if x_np:
-                hover_np = (
-                    f"{speed_metric}=%{{x:.4f}}<br>{q_label}=%{{y:.4f}}"
-                    f"<br>n_bins=%{{text}}<extra>{variant}</extra>"
-                )
-                fig_p.add_trace(
-                    go.Scatter(
-                        x=x_np,
-                        y=y_np,
-                        mode="markers",
-                        name=variant,
-                        marker={"color": VARIANT_COLORS[variant], "size": 8, "opacity": 0.4},
-                        legendgroup=variant,
-                        showlegend=(ds_idx == 1),
-                        text=nb_np,
-                        hovertemplate=hover_np,
-                    ),
-                    row=ds_idx,
-                    col=1,
-                )
-            # pareto points (larger, solid)
-            x_p = [x for x, flag in zip(x_all, pareto_mask, strict=True) if flag]
-            y_p = [y for y, flag in zip(y_all, pareto_mask, strict=True) if flag]
-            nb_p = [n for n, flag in zip(nb_all, pareto_mask, strict=True) if flag]
-            if x_p:
-                hover_p = (
-                    f"★ {speed_metric}=%{{x:.4f}}<br>{q_label}=%{{y:.4f}}"
-                    f"<br>n_bins=%{{text}}<extra>{variant} Pareto</extra>"
-                )
-                fig_p.add_trace(
-                    go.Scatter(
-                        x=x_p,
-                        y=y_p,
-                        mode="markers",
-                        name=f"{variant} (Pareto)",
-                        marker={
-                            "color": VARIANT_COLORS[variant],
-                            "size": 14,
-                            "symbol": "star",
-                            "line": {"width": 1, "color": "black"},
-                        },
-                        legendgroup=f"{variant}_pareto",
-                        showlegend=(ds_idx == 1),
-                        text=nb_p,
-                        hovertemplate=hover_p,
-                    ),
-                    row=ds_idx,
-                    col=1,
-                )
-
-        fig_p.update_xaxes(title_text=f"{speed_metric} (s)", row=ds_idx, col=1)
-        fig_p.update_yaxes(title_text=q_label, row=ds_idx, col=1)
-
-    fig_p.update_layout(
+    views = dataset_views(rows, speed_key)
+    figures = {
+        "rf_quality_vs_bins.html": _line_figure(
+            views,
+            "RF Quality vs n_bins by Variant",
+            lambda view: view.quality_key,
+            lambda view: view.quality_label,
+            expand_none=True,
+        ),
+        "rf_speed_vs_bins.html": _line_figure(
+            views,
+            f"RF {speed_metric} vs n_bins by Variant",
+            lambda _: speed_key,
+            lambda _: f"{speed_metric} (s)",
+            expand_none=False,
+        ),
+    }
+    pareto = make_subplots(rows=max(1, len(views)), cols=1, subplot_titles=[view.name for view in views])
+    for row_index, view in enumerate(views, start=1):
+        for trace in _pareto_traces(view, speed_key, speed_metric, first_row=row_index == 1):
+            pareto.add_trace(trace, row=row_index, col=1)
+        pareto.update_xaxes(title_text=f"{speed_metric} (s)", row=row_index, col=1)
+        pareto.update_yaxes(title_text=view.quality_label, row=row_index, col=1)
+    pareto.update_layout(
         title=f"RF Speed-Quality Pareto Frontier (speed={speed_metric})",
-        height=450 * max(1, len(datasets)),
+        height=450 * max(1, len(views)),
     )
-    pareto_path = plot_dir / "rf_speed_quality_pareto.html"
-    fig_p.write_html(pareto_path, include_plotlyjs="cdn")
-    written.append(pareto_path)
-
+    figures["rf_speed_quality_pareto.html"] = pareto
+    written = []
+    for file_name, figure in figures.items():
+        figure.write_html(plot_dir / file_name, include_plotlyjs="cdn")
+        written.append(plot_dir / file_name)
     return written
 
 
@@ -709,56 +674,50 @@ def generate_plots(  # noqa: C901, PLR0912, PLR0914, PLR0915
 # CLI
 # ---------------------------------------------------------------------------
 
+app: cyclopts.App = cyclopts.App(
+    name="randomforest_discretization_compare",
+    help=__doc__.splitlines()[0] if __doc__ else None,
+    result_action="return_value",
+)
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line options for benchmark run comparison.
+
+@app.default
+def main(
+    *,
+    input_path: Path = DEFAULT_INPUT,
+    plot_dir: Path = DEFAULT_PLOT_DIR,
+    plots: bool = False,
+    speed_metric: SpeedMetric = DEFAULT_SPEED_METRIC,
+) -> int:
+    """Compare the benchmark runs, and write interactive HTML plots.
+
+    Parameters
+    ----------
+    input_path : Path
+        The JSONL file that benchmarks/randomforest_discretization_benchmark.py writes.
+    plot_dir : Path
+        The directory for the interactive HTML plots.
+    plots : bool
+        Write the plots.
+    speed_metric : str
+        The speed metric of the Pareto analysis and of the speed plots.
 
     Returns
     -------
-    argparse.Namespace
-        Parsed arguments namespace.
+    int
+        0 when the comparison is done.
+
     """
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--input",
-        type=Path,
-        default=DEFAULT_INPUT,
-        help="JSONL file produced by benchmarks/randomforest_discretization_benchmark.py.",
-    )
-    parser.add_argument(
-        "--plot-dir",
-        type=Path,
-        default=DEFAULT_PLOT_DIR,
-        help="Directory where interactive HTML plots are written.",
-    )
-    parser.add_argument(
-        "--plots",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Generate interactive HTML plots (default: false).",
-    )
-    parser.add_argument(
-        "--speed-metric",
-        choices=SPEED_METRIC_CHOICES,
-        default=DEFAULT_SPEED_METRIC,
-        help="Speed metric to use for Pareto analysis and speed plots (default: total_time).",
-    )
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Execute run comparison and optionally generate plots."""
-    args = parse_args()
-    rows = load_runs(args.input)
-    print_summary(rows, speed_metric=args.speed_metric)
-
-    if args.plots:
-        written_plots = generate_plots(rows=rows, plot_dir=args.plot_dir, speed_metric=args.speed_metric)
+    rows = load_runs(input_path)
+    print_summary(rows, speed_metric=speed_metric)
+    if plots:
+        written_plots = generate_plots(rows=rows, plot_dir=plot_dir, speed_metric=speed_metric)
         if written_plots:
             sys.stdout.write("\nWrote interactive plots:\n")
             for path in written_plots:
                 sys.stdout.write(f"  - {path}\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(app())

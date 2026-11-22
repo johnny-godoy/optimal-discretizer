@@ -184,7 +184,9 @@ hooks = [
     id = "import-linter",
     name = "import-linter: layers and vendor SDK limits",
     language = "system",
-    entry = "uv run lint-imports",
+    # The editable install of meson-python reports a virtual path for the package, so the script lets import-linter
+    # read the package from src (scripts/lint_imports.py). The contracts are those of pyproject.toml.
+    entry = "uv run python -m scripts.lint_imports",
     files = "\\.py$|^pyproject\\.toml$",
     pass_filenames = false,
     priority = 60,

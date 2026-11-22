@@ -5,20 +5,41 @@ description = "Exact 1-D k-means discretization for scikit-learn, with a Cython 
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = ["k-means", "discretization", "binning", "scikit-learn", "smawk", "dynamic-programming", "cython"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Cython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
     "Typing :: Typed",
 ]
 authors = [
     { name = "Johnny Godoy", email = "johnny.godoy@ing.uchile.cl" }
 ]
-requires-python = ">=3.14"
+# The oldest CPython that NumPy and scikit-learn still release for. CI tests each version in the range.
+requires-python = ">=3.11"
 dependencies = [
     "attrs>=26.1.0",
     "beartype>=0.23.1",
-    "orjson>=3.13.0",
-    "structlog>=26.1.0",
+    "kneed>=0.8.5",
+    "numpy>=1.26.0",
+    # validate_data of sklearn.utils.validation first exists in 1.6.
+    "scikit-learn>=1.6.0",
+    # the hints of the estimator name the sparse types, which validate_data rejects with the error of scikit-learn
+    "scipy>=1.11.0",
 ]
 
 [project.urls]
@@ -30,10 +51,24 @@ Changelog = "https://github.com/johnny-godoy/optimal-discretizer/blob/main/CHANG
 [tool.uv]
 # A relative span keeps the cutoff 7 days behind today, so uv never picks a release that is less than 7 days old.
 exclude-newer = "7 days"
+# The editable install rebuilds the kernel on import with the build group of this environment. An isolated build
+# environment is gone after the install, so the rebuild would fail.
+no-build-isolation-package = ["optimal-discretizer"]
 
+# The editable build directory goes into .venv, where the template checks do not look for source files.
+[tool.uv.config-settings-package]
+optimal-discretizer = { "build-dir" = ".venv/meson-build" }
+
+# reason: the tools of the dev group (pyrefly, semgrep, cosmic-ray, the template scripts) run on the Python version of
+# .python-version only, while the package and its test group support every version of requires-python.
+[tool.uv.dependency-groups]
+dev = { requires-python = ">=3.14" }
+
+# meson-python builds the Cython kernel. A missing compiler or Cython stops the build with an error, and the sdist holds
+# only the files that git tracks, so the C file that Cython writes never reaches a distribution.
 [build-system]
-requires = ["uv_build>=0.11.0,<0.12.0"]
-build-backend = "uv_build"
+requires = ["meson-python>=0.18.0", "meson>=1.6.0", "cython>=3.1.0"]
+build-backend = "mesonpy"
 
 [tool.ruff]
 # reason: semgrep/rules.py holds bad code on purpose, as test data for the semgrep rules, and a fix by ruff would break
@@ -51,8 +86,16 @@ fix = true
 preview = true
 line-length = 120
 src = ["src"]
-target-version = "py314"
+target-version = "py311"
 unsafe-fixes = true
+
+# The package and its tests support Python 3.11, so ruff checks them at py311.
+[tool.ruff.per-file-target-version]
+# reason: recurring pattern: the template writes every script with syntax of the version in .python-version, the only
+# version that runs them.
+"scripts/**/*.py" = "py314"
+# reason: recurring pattern: the CI scripts run on the runner's python3, which is newer than the oldest supported one.
+".github/scripts/*.py" = "py314"
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -122,22 +165,45 @@ select = ["ALL"]
 [dependency-groups]
 dev = [
     "cosmic-ray>=8.7.0",
+    "cyclopts>=5.2.0",
     "deptry>=0.25.1",
-    "hypothesis>=6.170.1",
     "import-linter>=2.15",
+    "orjson>=3.13.0",
     "prek>=0.5.5",
     "pyrefly>=1.4.0",
-    "pytest>=9.1.1",
-    "pytest-cov>=7.1.0",
     "pyyaml>=6.0.3",
     "ruff>=0.17.1",
+    "scipy-stubs>=1.16.0",
     "semgrep>=1.181.0",
-    "sybil>=10.1.0",
+    "structlog>=26.1.0",
     "types-pyyaml>=6.0.12.20260906",
     "typst>=0.15.0",
     "vulture>=2.16",
+    { include-group = "build" },
+    { include-group = "test" },
     { include-group = "commits" },
     { include-group = "release" },
+    { include-group = "dist" },
+]
+# meson-python rebuilds the Cython kernel of the editable install on import, so its build tools live in the environment
+build = [
+    "cython>=3.1.0",
+    "meson>=1.6.0",
+    "meson-python>=0.18.0",
+    "ninja>=1.11.1",
+]
+# the test matrix installs only this group (and build) on each supported Python version
+test = [
+    "hypothesis>=6.170.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "sybil>=10.1.0",
+]
+# the release workflow checks, installs and smoke-tests the built files with this group
+dist = [
+    "cyclopts>=5.2.0",
+    "pydistcheck>=0.11.0",
+    "twine>=6.2.0",
 ]
 docs = [
     "mkdocstrings[python]>=1.0.7",

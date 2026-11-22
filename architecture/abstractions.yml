@@ -18,12 +18,36 @@ capabilities:
     keywords: [error, exception, raise, base]
     status: active
 
-  - id: summary
-    responsibility: Hold the summary statistics of a sequence of values
+  - id: exact-kmeans-1d
+    responsibility: Cluster one-dimensional values into a given number of clusters with the smallest inertia
     owner: optimal_discretizer.domain
-    symbol: optimal_discretizer.domain.summary:Summary
+    symbol: optimal_discretizer.domain.clustering:kmeans_1d
+    consumers: [optimal_discretizer.domain.scorers, optimal_discretizer.adapters]
+    keywords: [kmeans, cluster, partition, smawk, optimal, inertia]
+    status: active
+
+  - id: clustering-result
+    responsibility: Hold the labels, the centroids and the inertia of one clustering
+    owner: optimal_discretizer.domain
+    symbol: optimal_discretizer.domain.clustering:Clustering1D
+    consumers: [optimal_discretizer.domain.scorers, optimal_discretizer.adapters]
+    keywords: [clustering, labels, centroids, inertia, result]
+    status: active
+
+  - id: n-bins-selector
+    responsibility: Choose the number of bins of a feature from a sweep of clusterings
+    owner: optimal_discretizer.domain
+    symbol: optimal_discretizer.domain.scorers:NBinsSelector
     consumers: [optimal_discretizer.adapters]
-    keywords: [summary, statistics, mean, count]
+    keywords: [scorer, selector, n_bins, knee, elbow, mdl]
+    status: active
+
+  - id: candidate-fit
+    responsibility: Pair one number of bins with its exact clustering, as the input of a selector
+    owner: optimal_discretizer.domain
+    symbol: optimal_discretizer.domain.scorers:CandidateFit
+    consumers: [optimal_discretizer.adapters]
+    keywords: [candidate, fit, sweep, n_bins]
     status: active
 
 exceptions: []
