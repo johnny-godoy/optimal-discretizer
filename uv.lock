@@ -2515,6 +2515,7 @@ release = [
 ]
 test = [
     { name = "hypothesis" },
+    { name = "orjson" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "sybil" },
@@ -2581,6 +2582,7 @@ docs = [
 release = [{ name = "scriv", specifier = ">=1.8.0" }]
 test = [
     { name = "hypothesis", specifier = ">=6.170.1" },
+    { name = "orjson", specifier = ">=3.13.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "sybil", specifier = ">=10.1.0" },

@@ -216,9 +216,40 @@ jobs:
           gate: pytest
 
 
+  test-matrix:
+    name: pytest (Python ${{ matrix.python }})
+    needs: [changes, prek]
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every CPython of requires-python. The tools of the dev group need 3.14, so these runs install only the
+        # package, the test group and the build group of the editable install.
+        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the package and the test group
+        env:
+          PYTHON: ${{ matrix.python }}
+        run: uv sync --frozen --python "$PYTHON" --no-default-groups --group test --group build
+      - name: Run the tests of the package
+        run: |
+          mkdir -p "$CI_LOGS"
+          uv run --frozen --no-sync pytest tests/unit/optimal_discretizer --no-cov --color=no 2>&1 | tee "$CI_LOGS/pytest.log"
+      - uses: ./.github/actions/failure-report
+        if: failure()
+        with:
+          gate: pytest
+
   mutation:
     name: mutation (changed modules, 100% score)
-    needs: [changes, prek, trufflehog, semgrep, trivy, pytest]
+    needs: [changes, prek, trufflehog, semgrep, trivy, pytest, test-matrix]
     # A skipped gate does not block this job, so a failed or cancelled gate must be named. Without `!cancelled()` the
     # default `success()` would skip the job whenever any gate is skipped.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && needs.changes.outputs.src == 'true' }}
@@ -279,7 +310,7 @@ jobs:
   report:
     name: report
     if: always()
-    needs: [changes, prek, trufflehog, semgrep, trivy, pytest, mutation, progress] # progress ends first, so it cannot overwrite the report
+    needs: [changes, prek, trufflehog, semgrep, trivy, pytest, test-matrix, mutation, progress] # progress ends first, so it cannot overwrite the report
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
