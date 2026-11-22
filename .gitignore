@@ -1,4 +1,9 @@
 # Python-generated files
+# Cython writes the C file of the kernel at build time; it never belongs in git (scripts/check_distributions.py)
+src/**/*.c
+*.so
+*.pyd
+wheelhouse/
 __pycache__/
 *.py[cod]
 *.egg-info/

@@ -2471,6 +2471,7 @@ commits = [
     { name = "commitizen" },
 ]
 dev = [
+    { name = "attrs", marker = "python_full_version >= '3.14'" },
     { name = "commitizen", marker = "python_full_version >= '3.14'" },
     { name = "cosmic-ray", marker = "python_full_version >= '3.14'" },
     { name = "cyclopts", marker = "python_full_version >= '3.14'" },
@@ -2500,6 +2501,7 @@ dev = [
     { name = "vulture", marker = "python_full_version >= '3.14'" },
 ]
 dist = [
+    { name = "attrs" },
     { name = "cyclopts" },
     { name = "pydistcheck" },
     { name = "twine" },
@@ -2537,6 +2539,7 @@ build = [
 ]
 commits = [{ name = "commitizen", specifier = ">=4.19.2" }]
 dev = [
+    { name = "attrs", marker = "python_full_version >= '3.14'", specifier = ">=26.1.0" },
     { name = "commitizen", marker = "python_full_version >= '3.14'", specifier = ">=4.19.2" },
     { name = "cosmic-ray", marker = "python_full_version >= '3.14'", specifier = ">=8.7.0" },
     { name = "cyclopts", marker = "python_full_version >= '3.14'", specifier = ">=5.2.0" },
@@ -2566,6 +2569,7 @@ dev = [
     { name = "vulture", marker = "python_full_version >= '3.14'", specifier = ">=2.16" },
 ]
 dist = [
+    { name = "attrs", specifier = ">=26.1.0" },
     { name = "cyclopts", specifier = ">=5.2.0" },
     { name = "pydistcheck", specifier = ">=0.11.0" },
     { name = "twine", specifier = ">=6.2.0" },

@@ -201,6 +201,7 @@ test = [
 ]
 # the release workflow checks, installs and smoke-tests the built files with this group
 dist = [
+    "attrs>=26.1.0",
     "cyclopts>=5.2.0",
     "pydistcheck>=0.11.0",
     "twine>=6.2.0",
